@@ -3,7 +3,8 @@ export {
 	getThemes,
 	getCurrentTheme,
 	setTheme,
-	isDarkTheme,
-	setDarkTheme
+	isDark,
+	setDark,
+	toggleDark
 } from './theme.svelte.js';
 export type { ThemesConfig, ThemeLoader } from './types.js';

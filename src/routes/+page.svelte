@@ -3,8 +3,8 @@
 		getThemes,
 		getCurrentTheme,
 		setTheme,
-		isDarkTheme,
-		setDarkTheme
+		isDark,
+		setDark
 	} from '$lib';
 
 	const themes = getThemes();
@@ -75,7 +75,7 @@
 				type="button"
 				aria-label="Toggle dark mode"
 				onclick={(e) =>
-					withTransition(() => setDarkTheme(!isDarkTheme()), {
+					withTransition(() => setDark(!isDark()), {
 						x: e.clientX,
 						y: e.clientY
 					})}
@@ -113,6 +113,33 @@
 					<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
 				</svg>
 			</button>
+			<button
+				type="button"
+				aria-label="Use system color scheme"
+				title="Use system color scheme"
+				onclick={(e) =>
+					withTransition(() => setDark('system'), {
+						x: e.clientX,
+						y: e.clientY
+					})}
+				class="shrink-0 self-stretch aspect-square grid place-items-center rounded-md bg-secondary text-secondary-foreground hover:opacity-90 transition cursor-pointer"
+			>
+				<svg
+					width="18"
+					height="18"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<rect width="20" height="14" x="2" y="3" rx="2" />
+					<line x1="8" x2="16" y1="21" y2="21" />
+					<line x1="12" x2="12" y1="17" y2="21" />
+				</svg>
+			</button>
 			<a
 				href="https://github.com/plcharriere/svelte-themes"
 				target="_blank"
@@ -140,7 +167,7 @@
 			<header>
 				<p class="text-muted-foreground">
 					Active theme: <code class="font-mono text-sm">{getCurrentTheme()}</code> ·
-					{isDarkTheme() ? 'dark' : 'light'}
+					{isDark() ? 'dark' : 'light'}
 				</p>
 			</header>
 

@@ -3,7 +3,7 @@ import { getServerTheme } from './ssr-store.js';
 
 type SyncMessage =
 	| { kind: 'theme'; name: string }
-	| { kind: 'dark'; dark: boolean };
+	| { kind: 'dark'; dark: boolean | 'system' };
 
 let themeState = $state<string | null>(null);
 let darkState = $state<boolean | null>(null);
@@ -55,7 +55,7 @@ export function getCurrentTheme(): string {
 	return themeState ?? document.documentElement.dataset.theme ?? getConfig().defaultTheme;
 }
 
-export async function setTheme(name: string, dark?: boolean): Promise<void> {
+export async function setTheme(name: string, dark?: boolean | 'system'): Promise<void> {
 	if (typeof document === 'undefined') return;
 	const cfg = getConfig();
 	if (!Object.hasOwn(cfg.themes, name)) {
@@ -67,21 +67,33 @@ export async function setTheme(name: string, dark?: boolean): Promise<void> {
 	applyTheme(name, css);
 	setCookie(cfg.cookieTheme, name);
 	bc?.postMessage({ kind: 'theme', name } satisfies SyncMessage);
-	if (dark !== undefined) setDarkTheme(dark);
+	if (dark !== undefined) setDark(dark);
 }
 
-export function isDarkTheme(): boolean {
+export function isDark(): boolean {
 	if (typeof document === 'undefined') {
 		return getServerTheme()?.dark ?? getConfig().defaultDark;
 	}
 	return darkState ?? document.documentElement.classList.contains('dark');
 }
 
-export function setDarkTheme(dark: boolean): void {
+export function setDark(dark: boolean | 'system'): void {
 	if (typeof document === 'undefined') return;
+	const cfg = getConfig();
+	if (dark === 'system') {
+		document.cookie = `${cfg.cookieDark}=; path=/; max-age=0; SameSite=Lax`;
+		const resolved = matchMedia('(prefers-color-scheme: dark)').matches;
+		applyDark(resolved);
+		bc?.postMessage({ kind: 'dark', dark: 'system' } satisfies SyncMessage);
+		return;
+	}
 	applyDark(dark);
-	setCookie(getConfig().cookieDark, dark ? '1' : '0');
+	setCookie(cfg.cookieDark, dark ? '1' : '0');
 	bc?.postMessage({ kind: 'dark', dark } satisfies SyncMessage);
+}
+
+export function toggleDark(): void {
+	setDark(!isDark());
 }
 
 export function initClient(): void {
@@ -107,9 +119,15 @@ export function initClient(): void {
 		bc.addEventListener('message', (e) => {
 			const msg = e.data as SyncMessage | null;
 			if (!msg || typeof msg !== 'object') return;
-			if (msg.kind === 'dark' && typeof msg.dark === 'boolean') {
-				applyDark(msg.dark);
-				return;
+			if (msg.kind === 'dark') {
+				if (msg.dark === 'system') {
+					applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
+					return;
+				}
+				if (typeof msg.dark === 'boolean') {
+					applyDark(msg.dark);
+					return;
+				}
 			}
 			if (
 				msg.kind === 'theme' &&
