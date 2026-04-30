@@ -34,6 +34,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>svelte-themes - {prettify(getCurrentTheme())}</title>
+</svelte:head>
+
 <div class="min-h-screen bg-background text-foreground font-sans flex">
 	<aside
 		class="bg-background text-foreground border-r border-border w-64 shrink-0 p-6 flex flex-col gap-6 sticky top-0 h-screen"
