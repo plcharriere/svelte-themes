@@ -121,6 +121,7 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
     getCurrentTheme,
     setTheme,
     isDark,
+    getDark,
     setDark,
     toggleDark
   } from '@plcharriere/svelte-themes';
@@ -136,9 +137,24 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
   Toggle <span class="dark:hidden">dark</span><span class="hidden dark:inline">light</span>
 </button>
 <button onclick={() => setDark('system')}>System</button>
+
+<!-- 3-way Light / Dark / System select -->
+<select
+  onchange={(e) => {
+    const v = e.currentTarget.value;
+    setDark(v === 'system' ? 'system' : v === 'true');
+  }}
+  value={String(getDark())}
+>
+  <option value="false">Light</option>
+  <option value="true">Dark</option>
+  <option value="system">System</option>
+</select>
 ```
 
-`setTheme` and `setDark` write the configured cookies (defaults `theme` and `theme-dark`) so the choice survives reloads. `setDark('system')` clears the dark cookie and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-theme">` element the server already rendered. The `getCurrentTheme()` / `isDark()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
+`setTheme` and `setDark` write the configured cookies (defaults `theme` and `theme-dark`) so the choice survives reloads. `setDark('system')` clears the dark cookie and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-theme">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getDark()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
+
+`isDark()` returns the **resolved** dark state (always a boolean, regardless of source). `getDark()` returns the **explicit** state — `true` / `false` for cookie, `'system'` for no cookie. Use `isDark()` for visual logic ("show the moon icon"), `getDark()` for binding 3-way controls.
 
 ## Features
 
@@ -146,7 +162,7 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 - **Cookie-persisted** — the choice survives reloads and works across server and client without `localStorage` hacks.
 - **Respects `prefers-color-scheme`** — first-time visitors get their OS preference. The library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Cookie wins once the user explicitly toggles.
 - **Cross-tab sync** — switching theme or dark in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
-- **Reactive reads** — `getCurrentTheme()` and `isDark()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates and OS preference changes flow into your components with no manual subscription.
+- **Reactive reads** — `getCurrentTheme()`, `isDark()`, and `getDark()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates and OS preference changes flow into your components with no manual subscription.
 - **Lazy-loaded** — each theme is a dynamic import. The server only loads the active theme; the client only fetches a theme on first switch, then caches it.
 - **Plain CSS** — themes are CSS files. Bring your own variables, your own Tailwind setup, your own conventions.
 - **Independent dark toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
@@ -161,7 +177,8 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 | `toggleDark()` | Flip the current dark state. |
 | `getCurrentTheme()` | Active theme name. |
 | `getThemes()` | All registered theme names. |
-| `isDark()` | Whether dark mode is on. |
+| `isDark()` | Resolved dark state — always boolean. |
+| `getDark()` | Explicit choice — `true` / `false` / `'system'`. |
 
 Server entry (`@plcharriere/svelte-themes/server`): `createThemesHandle()`.
 
