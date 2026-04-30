@@ -7,6 +7,7 @@ type SyncMessage =
 
 let themeState = $state<string | null>(null);
 let darkState = $state<boolean | null>(null);
+let darkCookieSet = $state<boolean>(false);
 
 function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -77,11 +78,21 @@ export function isDark(): boolean {
 	return darkState ?? document.documentElement.classList.contains('dark');
 }
 
+export function getDark(): boolean | 'system' {
+	if (typeof document === 'undefined') {
+		const ss = getServerTheme();
+		if (ss?.darkSource === 'system') return 'system';
+		return ss?.dark ?? getConfig().defaultDark;
+	}
+	return darkCookieSet ? (darkState ?? false) : 'system';
+}
+
 export function setDark(dark: boolean | 'system'): void {
 	if (typeof document === 'undefined') return;
 	const cfg = getConfig();
 	if (dark === 'system') {
 		document.cookie = `${cfg.cookieDark}=; path=/; max-age=0; SameSite=Lax`;
+		darkCookieSet = false;
 		const resolved = matchMedia('(prefers-color-scheme: dark)').matches;
 		applyDark(resolved);
 		bc?.postMessage({ kind: 'dark', dark: 'system' } satisfies SyncMessage);
@@ -89,6 +100,7 @@ export function setDark(dark: boolean | 'system'): void {
 	}
 	applyDark(dark);
 	setCookie(cfg.cookieDark, dark ? '1' : '0');
+	darkCookieSet = true;
 	bc?.postMessage({ kind: 'dark', dark } satisfies SyncMessage);
 }
 
@@ -105,6 +117,7 @@ export function initClient(): void {
 
 	themeState = document.documentElement.dataset.theme ?? null;
 	darkState = document.documentElement.classList.contains('dark');
+	darkCookieSet = hasDarkCookie();
 
 	const cfg = getConfig();
 
@@ -121,10 +134,12 @@ export function initClient(): void {
 			if (!msg || typeof msg !== 'object') return;
 			if (msg.kind === 'dark') {
 				if (msg.dark === 'system') {
+					darkCookieSet = false;
 					applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
 					return;
 				}
 				if (typeof msg.dark === 'boolean') {
+					darkCookieSet = true;
 					applyDark(msg.dark);
 					return;
 				}

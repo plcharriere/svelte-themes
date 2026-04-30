@@ -33,11 +33,14 @@ export function createThemesHandle(): Handle {
 
 		const darkCookie = event.cookies.get(cfg.cookieDark);
 		let dark: boolean;
+		let darkSource: 'cookie' | 'system';
 		if (darkCookie === '1' || darkCookie === '0') {
 			dark = darkCookie === '1';
+			darkSource = 'cookie';
 		} else {
 			const hint = event.request.headers.get('sec-ch-prefers-color-scheme');
 			dark = hint ? hint === 'dark' : cfg.defaultDark;
+			darkSource = 'system';
 		}
 
 		event.setHeaders({
@@ -50,7 +53,7 @@ export function createThemesHandle(): Handle {
 		const safeName = htmlAttrEscape(name);
 		const bootScript = buildBootScript(cfg.cookieDark);
 
-		return runWithTheme({ theme: name, dark }, () =>
+		return runWithTheme({ theme: name, dark, darkSource }, () =>
 			resolve(event, {
 				transformPageChunk: ({ html }) =>
 					html

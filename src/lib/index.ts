@@ -4,6 +4,7 @@ export {
 	getCurrentTheme,
 	setTheme,
 	isDark,
+	getDark,
 	setDark,
 	toggleDark
 } from './theme.svelte.js';

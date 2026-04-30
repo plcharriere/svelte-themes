@@ -3,6 +3,7 @@ import { BROWSER } from 'esm-env';
 type RequestState = {
 	theme: string;
 	dark: boolean;
+	darkSource: 'cookie' | 'system';
 };
 
 type Storage = {

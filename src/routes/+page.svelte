@@ -4,6 +4,7 @@
 		getCurrentTheme,
 		setTheme,
 		isDark,
+		getDark,
 		setDark
 	} from '$lib';
 
@@ -167,7 +168,7 @@
 			<header>
 				<p class="text-muted-foreground">
 					Active theme: <code class="font-mono text-sm">{getCurrentTheme()}</code> ·
-					{isDark() ? 'dark' : 'light'}
+					{isDark() ? 'dark' : 'light'} ({getDark() === 'system' ? 'system' : 'cookie'})
 				</p>
 			</header>
 
