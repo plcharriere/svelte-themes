@@ -1,13 +1,16 @@
 import { getConfig, loadCss } from './config.js';
 import { getServerTheme } from './ssr-store.js';
+import type { Scheme } from './types.js';
 
 type SyncMessage =
 	| { kind: 'theme'; name: string }
-	| { kind: 'dark'; dark: boolean | 'system' };
+	| { kind: 'scheme'; scheme: Scheme };
+
+type SchemeCookieValue = Scheme | null;
 
 let themeState = $state<string | null>(null);
 let darkState = $state<boolean | null>(null);
-let darkCookieSet = $state<boolean>(false);
+let schemeCookieValue = $state<SchemeCookieValue>(null);
 let pendingLoads = $state<number>(0);
 let loadingName = $state<string | null>(null);
 
@@ -15,9 +18,13 @@ function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function hasDarkCookie(): boolean {
-	const re = new RegExp(`(?:^|;\\s*)${regexEscape(getConfig().cookieDark)}=`);
-	return re.test(document.cookie);
+function readSchemeCookie(): SchemeCookieValue {
+	const re = new RegExp(`(?:^|;\\s*)${regexEscape(getConfig().cookieScheme)}=([^;]*)`);
+	const m = document.cookie.match(re);
+	if (!m) return null;
+	const v = decodeURIComponent(m[1]);
+	if (v === 'light' || v === 'dark' || v === 'system') return v;
+	return null;
 }
 
 function setCookie(name: string, value: string): void {
@@ -58,7 +65,7 @@ export function getCurrentTheme(): string {
 	return themeState ?? document.documentElement.dataset.theme ?? getConfig().defaultTheme;
 }
 
-export async function setTheme(name: string, dark?: boolean | 'system'): Promise<void> {
+export async function setTheme(name: string, scheme?: Scheme): Promise<void> {
 	if (typeof document === 'undefined') return;
 	const cfg = getConfig();
 	if (!Object.hasOwn(cfg.themes, name)) {
@@ -73,7 +80,7 @@ export async function setTheme(name: string, dark?: boolean | 'system'): Promise
 		applyTheme(name, css);
 		setCookie(cfg.cookieTheme, name);
 		bc?.postMessage({ kind: 'theme', name } satisfies SyncMessage);
-		if (dark !== undefined) setDark(dark);
+		if (scheme !== undefined) setScheme(scheme);
 	} finally {
 		pendingLoads--;
 		if (callId === latestCall) loadingName = null;
@@ -91,39 +98,50 @@ export function getLoadingTheme(): string | null {
 
 export function isDark(): boolean {
 	if (typeof document === 'undefined') {
-		return getServerTheme()?.dark ?? getConfig().defaultDark;
+		const ss = getServerTheme();
+		if (ss) return ss.dark;
+		const ds = getConfig().defaultScheme;
+		return ds === 'dark';
 	}
 	return darkState ?? document.documentElement.classList.contains('dark');
 }
 
-export function getDark(): boolean | 'system' {
+export function getScheme(): Scheme {
+	const cfg = getConfig();
 	if (typeof document === 'undefined') {
 		const ss = getServerTheme();
-		if (ss?.darkSource === 'system') return 'system';
-		return ss?.dark ?? getConfig().defaultDark;
+		if (ss) return ss.scheme;
+		return cfg.defaultScheme;
 	}
-	return darkCookieSet ? (darkState ?? false) : 'system';
+	if (schemeCookieValue !== null) return schemeCookieValue;
+	return cfg.defaultScheme;
 }
 
-export function setDark(dark: boolean | 'system'): void {
+export function getSchemeSource(): 'cookie' | 'default' {
+	if (typeof document === 'undefined') {
+		return getServerTheme()?.schemeSource ?? 'default';
+	}
+	return schemeCookieValue === null ? 'default' : 'cookie';
+}
+
+export function setScheme(scheme: Scheme): void {
 	if (typeof document === 'undefined') return;
 	const cfg = getConfig();
-	if (dark === 'system') {
-		document.cookie = `${cfg.cookieDark}=; path=/; max-age=0; SameSite=Lax`;
-		darkCookieSet = false;
-		const resolved = matchMedia('(prefers-color-scheme: dark)').matches;
-		applyDark(resolved);
-		bc?.postMessage({ kind: 'dark', dark: 'system' } satisfies SyncMessage);
+	if (scheme === 'system') {
+		setCookie(cfg.cookieScheme, 'system');
+		schemeCookieValue = 'system';
+		applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
+		bc?.postMessage({ kind: 'scheme', scheme: 'system' } satisfies SyncMessage);
 		return;
 	}
-	applyDark(dark);
-	setCookie(cfg.cookieDark, dark ? '1' : '0');
-	darkCookieSet = true;
-	bc?.postMessage({ kind: 'dark', dark } satisfies SyncMessage);
+	applyDark(scheme === 'dark');
+	setCookie(cfg.cookieScheme, scheme);
+	schemeCookieValue = scheme;
+	bc?.postMessage({ kind: 'scheme', scheme } satisfies SyncMessage);
 }
 
-export function toggleDark(): void {
-	setDark(!isDark());
+export function toggleScheme(): void {
+	setScheme(isDark() ? 'light' : 'dark');
 }
 
 export function initClient(): void {
@@ -135,13 +153,16 @@ export function initClient(): void {
 
 	themeState = document.documentElement.dataset.theme ?? null;
 	darkState = document.documentElement.classList.contains('dark');
-	darkCookieSet = hasDarkCookie();
+	schemeCookieValue = readSchemeCookie();
 
 	const cfg = getConfig();
 
 	mql = matchMedia('(prefers-color-scheme: dark)');
 	mqlListener = (e) => {
-		if (!hasDarkCookie()) applyDark(e.matches);
+		const v = readSchemeCookie();
+		if (v === 'system' || (v === null && getConfig().defaultScheme === 'system')) {
+			applyDark(e.matches);
+		}
 	};
 	mql.addEventListener('change', mqlListener);
 
@@ -150,15 +171,15 @@ export function initClient(): void {
 		bc.addEventListener('message', (e) => {
 			const msg = e.data as SyncMessage | null;
 			if (!msg || typeof msg !== 'object') return;
-			if (msg.kind === 'dark') {
-				if (msg.dark === 'system') {
-					darkCookieSet = false;
+			if (msg.kind === 'scheme') {
+				if (msg.scheme === 'system') {
+					schemeCookieValue = 'system';
 					applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
 					return;
 				}
-				if (typeof msg.dark === 'boolean') {
-					darkCookieSet = true;
-					applyDark(msg.dark);
+				if (msg.scheme === 'light' || msg.scheme === 'dark') {
+					schemeCookieValue = msg.scheme;
+					applyDark(msg.scheme === 'dark');
 					return;
 				}
 			}

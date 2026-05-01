@@ -1,11 +1,13 @@
 export type ThemeLoader = () => Promise<string | { default: string }>;
 
+export type Scheme = 'light' | 'dark' | 'system';
+
 export interface ThemesConfig {
 	themes: Record<string, ThemeLoader>;
 	defaultTheme?: string;
-	defaultDark?: boolean;
+	defaultScheme?: Scheme;
 	cookieTheme?: string;
-	cookieDark?: string;
+	cookieScheme?: string;
 	syncTabs?: boolean;
 	syncChannel?: string;
 }
@@ -13,9 +15,9 @@ export interface ThemesConfig {
 export interface ResolvedThemesConfig {
 	themes: Record<string, ThemeLoader>;
 	defaultTheme: string;
-	defaultDark: boolean;
+	defaultScheme: Scheme;
 	cookieTheme: string;
-	cookieDark: string;
+	cookieScheme: string;
 	syncTabs: boolean;
 	syncChannel: string;
 }

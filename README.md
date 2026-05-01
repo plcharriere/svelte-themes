@@ -3,11 +3,11 @@
 SSR-safe, cookie-persisted theme switching for **SvelteKit 2 + Svelte 5**. Themes are plain CSS files, lazy-loaded on demand, with light/dark as an independent toggle that respects `prefers-color-scheme` until the user explicitly chooses.
 
 ```ts
-setTheme('bubblegum');         // switch theme, persist via cookie
-setDark(true);                 // dark/light is independent of theme
-setDark('system');             // follow OS prefers-color-scheme
-toggleDark();                  // flip current dark state
-setTheme('candyland', true);   // switch theme + dark in one call
+setTheme('bubblegum');           // switch theme, persist via cookie
+setScheme('dark');               // scheme is independent of theme
+setScheme('system');             // follow OS prefers-color-scheme
+toggleScheme();                  // flip between 'light' and 'dark'
+setTheme('candyland', 'dark');   // switch theme + scheme in one call
 ```
 
 No flash on reload. The active theme's CSS is read from a cookie server-side and inlined into the HTML before the page ships.
@@ -67,7 +67,7 @@ createThemes({
     candyland: () => import('./themes/candyland.css?inline')
   },
   defaultTheme: 'bubblegum',
-  defaultDark: false
+  defaultScheme: 'system'
 });
 ```
 
@@ -110,7 +110,7 @@ export const handle = createThemesHandle();
 </html>
 ```
 
-Three placeholders are filled by the handle on every request: `%theme%` (theme name), `%dark%` (`dark` or empty), and `%theme-css%` (the active theme's CSS). The handle also auto-injects a tiny boot script before `</head>` that fixes up the `dark` class from `prefers-color-scheme` for first-time visitors who haven't set the dark cookie yet — runs before paint, so no flash.
+Three placeholders are filled by the handle on every request: `%theme%` (theme name), `%dark%` (`dark` or empty), and `%theme-css%` (the active theme's CSS). The handle also auto-injects a tiny boot script before `</head>` that fixes up the `dark` class from `prefers-color-scheme` whenever the user is in system mode (cookie `scheme=system` or no cookie + `defaultScheme: 'system'`) — runs before paint, so no flash.
 
 ### 4. Switch themes
 
@@ -121,9 +121,9 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
     getCurrentTheme,
     setTheme,
     isDark,
-    getDark,
-    setDark,
-    toggleDark
+    getScheme,
+    setScheme,
+    toggleScheme
   } from '@plcharriere/svelte-themes';
 </script>
 
@@ -133,28 +133,26 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
   {/each}
 </select>
 
-<button onclick={toggleDark}>
+<button onclick={toggleScheme}>
   Toggle <span class="dark:hidden">dark</span><span class="hidden dark:inline">light</span>
 </button>
-<button onclick={() => setDark('system')}>System</button>
+<button onclick={() => setScheme('system')}>System</button>
 
 <!-- 3-way Light / Dark / System select -->
-<select
-  onchange={(e) => {
-    const v = e.currentTarget.value;
-    setDark(v === 'system' ? 'system' : v === 'true');
-  }}
-  value={String(getDark())}
->
-  <option value="false">Light</option>
-  <option value="true">Dark</option>
+<select onchange={(e) => setScheme(e.currentTarget.value)} value={getScheme()}>
+  <option value="light">Light</option>
+  <option value="dark">Dark</option>
   <option value="system">System</option>
 </select>
 ```
 
-`setTheme` and `setDark` write the configured cookies (defaults `theme` and `theme-dark`) so the choice survives reloads. `setDark('system')` clears the dark cookie and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-themes">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getDark()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
+`setTheme` and `setScheme` write the configured cookies (defaults `theme` and `scheme`) so the choice survives reloads. `setScheme('system')` writes `scheme=system` and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-themes">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getScheme()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
 
-`isDark()` returns the **resolved** dark state (always a boolean, regardless of source). `getDark()` returns the **explicit** state — `true` / `false` for cookie, `'system'` for no cookie. Use `isDark()` for visual logic ("show the moon icon"), `getDark()` for binding 3-way controls.
+Three orthogonal accessors:
+
+- **`isDark()`** → `boolean` — the **resolved** dark state. Always a boolean, regardless of how it was decided. Use for visual logic ("show the moon icon").
+- **`getScheme()`** → `'light' | 'dark' | 'system'` — the **value** the user (or config) chose. Returns `'system'` when the user is following the OS, `'light'`/`'dark'` when they explicitly picked. Use for binding a 3-way Light / Dark / System control.
+- **`getSchemeSource()`** → `'cookie' | 'default'` — where the value came from. `'cookie'` if the user explicitly chose anything (including `'system'`), `'default'` if no cookie is set and `defaultScheme` from config is being used.
 
 ### Loading state
 
@@ -192,25 +190,26 @@ Both functions also fire when **another tab** broadcasts a theme change and this
 
 - **SSR-safe** — the active theme's CSS is inlined into the HTML on the server. No flash on reload.
 - **Cookie-persisted** — the choice survives reloads and works across server and client without `localStorage` hacks.
-- **Respects `prefers-color-scheme`** — first-time visitors get their OS preference. The library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Cookie wins once the user explicitly toggles.
-- **Cross-tab sync** — switching theme or dark in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
-- **Reactive reads** — `getCurrentTheme()`, `isDark()`, `getDark()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
+- **Respects `prefers-color-scheme`** — when the user is in system mode (default, or `setScheme('system')`), the library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Set `defaultScheme: 'light'` or `'dark'` to ignore the OS preference for first-time visitors; users can still opt into system at any point via `setScheme('system')`.
+- **Cross-tab sync** — switching theme or scheme in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
+- **Reactive reads** — `getCurrentTheme()`, `isDark()`, `getScheme()`, `getSchemeSource()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
 - **Lazy-loaded** — each theme is a dynamic import. The server only loads the active theme; the client only fetches a theme on first switch, then caches it.
 - **Plain CSS** — themes are CSS files. Bring your own variables, your own Tailwind setup, your own conventions.
-- **Independent dark toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
+- **Independent scheme toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
 
 ## API
 
 | Export | Purpose |
 | --- | --- |
-| `createThemes(config)` | Setup. Registers themes, default theme, default dark. |
-| `setTheme(name, dark?)` | Switch theme, optionally also set dark (`boolean \| 'system'`). Async. |
-| `setDark(dark)` | Set dark independently. `dark: boolean \| 'system'`. |
-| `toggleDark()` | Flip the current dark state. |
+| `createThemes(config)` | Setup. Registers themes, default theme, default scheme. |
+| `setTheme(name, scheme?)` | Switch theme, optionally also set scheme (`'light' \| 'dark' \| 'system'`). Async. |
 | `getCurrentTheme()` | Active theme name. |
 | `getThemes()` | All registered theme names. |
+| `setScheme(scheme)` | Set scheme independently. `scheme: 'light' \| 'dark' \| 'system'`. |
+| `toggleScheme()` | Flip between `'light'` and `'dark'`. |
+| `getScheme()` | The chosen value — `'light'` / `'dark'` / `'system'`. |
+| `getSchemeSource()` | Where the value came from — `'cookie'` (user picked) / `'default'` (config fallback). |
 | `isDark()` | Resolved dark state — always boolean. |
-| `getDark()` | Explicit choice — `true` / `false` / `'system'`. |
 | `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to ask "is *this* theme loading?". |
 | `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
 
@@ -223,37 +222,46 @@ createThemes({
   themes: {
     name: () => import('./path-to-theme.css?inline')
   },
-  defaultTheme: 'name',        // optional — falls back to the first theme
-  defaultDark: false,          // optional — last-resort fallback only
-  cookieTheme: 'theme',        // optional — cookie name for the active theme
-  cookieDark: 'theme-dark',    // optional — cookie name for the dark flag
-  syncTabs: true,              // optional — broadcast changes to other tabs
-  syncChannel: 'svelte-themes' // optional — BroadcastChannel name
+  defaultTheme: 'name',         // optional — falls back to the first theme
+  defaultScheme: 'system',      // 'system' | 'light' | 'dark' (default 'system')
+  cookieTheme: 'theme',         // optional — cookie name for the active theme
+  cookieScheme: 'scheme',       // optional — cookie name for the scheme
+  syncTabs: true,               // optional — broadcast changes to other tabs
+  syncChannel: 'svelte-themes'  // optional — BroadcastChannel name
 });
 ```
 
-`defaultDark` is the **last-resort fallback** when neither a cookie nor `prefers-color-scheme` can be read. In practice, browsers expose the OS preference, so this rarely kicks in — first-time visitors normally get whatever their OS is set to, regardless of `defaultDark`.
+`defaultScheme` decides what first-time visitors (no cookie) see:
 
-`cookieTheme` and `cookieDark` let you rename the cookies (e.g. to `app-theme` / `app-theme-dark`) to avoid collisions with other libs or tenants on the same domain. Both client and server read from these names, and the auto-injected boot script picks up the resolved name automatically. Names must match `^[A-Za-z0-9_-]+$` (RFC 6265 token subset) — the lib throws at `createThemes` otherwise.
+- `'system'` (default) — follow `prefers-color-scheme`. Server reads the `Sec-CH-Prefers-Color-Scheme` client hint; the boot script and `matchMedia` listener cover browsers that don't send it.
+- `'light'` / `'dark'` — force light or dark for first-time visitors, ignoring the OS preference.
 
-`syncTabs` enables live cross-tab updates via `BroadcastChannel` — when one tab calls `setTheme`, `setDark`, or `toggleDark`, every other open tab applies the change immediately. Set to `false` to disable. `syncChannel` only matters if you have multiple apps on the same origin (e.g. `/app1` and `/app2`) and want to keep them isolated; otherwise the default is fine.
+`setScheme('system')` is **always allowed**, regardless of `defaultScheme`. The user's choice is persisted as `scheme=system` in the cookie and survives reloads.
+
+`cookieTheme` and `cookieScheme` let you rename the cookies (e.g. to `app-theme` / `app-scheme`) to avoid collisions with other libs or tenants on the same domain. Both client and server read from these names, and the auto-injected boot script picks up the resolved name automatically. Names must match `^[A-Za-z0-9_-]+$` (RFC 6265 token subset) — the lib throws at `createThemes` otherwise.
+
+`syncTabs` enables live cross-tab updates via `BroadcastChannel` — when one tab calls `setTheme`, `setScheme`, or `toggleScheme`, every other open tab applies the change immediately. Set to `false` to disable. `syncChannel` only matters if you have multiple apps on the same origin (e.g. `/app1` and `/app2`) and want to keep them isolated; otherwise the default is fine.
 
 ## How it works
 
-For each request the handle decides on a theme + dark in this order:
+For each request the handle decides on a theme + scheme by reading the `theme` and `scheme` cookies (configurable names):
 
-1. **Theme cookie** (default `theme`, configurable) — if set and known, use it. Otherwise fall back to `defaultTheme`.
-2. **Dark cookie** (default `theme-dark`, configurable; value `'1'` / `'0'`) — if set, use it.
-3. **`Sec-CH-Prefers-Color-Scheme` request header** — if the browser sent the client hint (Chrome and any browser that's been told via `Accept-CH` from a previous response), use it.
-4. **`defaultDark`** — last-resort fallback.
+1. **Theme cookie** — if set and known, use it. Otherwise fall back to `defaultTheme`.
+2. **Scheme cookie** — has three valid values:
+   - `'dark'` → force dark
+   - `'light'` → force light
+   - `'system'` → follow OS prefs (read `Sec-CH-Prefers-Color-Scheme` request header)
+3. **No scheme cookie** — fall back to `defaultScheme`:
+   - `'system'` → follow OS prefs (same as cookie `'system'`)
+   - `'light'` / `'dark'` → use that
 
-The handle then loads the matching theme CSS lazily, inlines it into `%theme-css%`, sets `%theme%` / `%dark%` on `<html>`, and emits `Accept-CH: Sec-CH-Prefers-Color-Scheme` so the next request carries the hint. By the time the HTML reaches the browser, the right theme is already painted.
+The handle loads the matching theme CSS lazily, inlines it into `%theme-css%`, sets `%theme%` / `%dark%` on `<html>`, and emits `Accept-CH: Sec-CH-Prefers-Color-Scheme` so the next request carries the hint. By the time the HTML reaches the browser, the right theme is already painted.
 
-A tiny boot script is auto-injected by the handle right before `</head>`. It runs synchronously before paint, and toggles the `dark` class from `matchMedia('(prefers-color-scheme: dark)')` when no dark cookie is present — covers first-ever visits and browsers that don't send the client hint. The configured `cookieDark` name is baked into the script per request, so it stays in sync with `createThemes` automatically. A `matchMedia` listener on the client keeps the class updated if the user changes their OS preference while the page is open.
+A tiny boot script is auto-injected by the handle right before `</head>`. It runs synchronously before paint, and toggles the `dark` class from `matchMedia('(prefers-color-scheme: dark)')` when the user is in system mode (cookie `'system'` or no cookie + `defaultScheme: 'system'`) — covers first-ever visits and browsers that don't send the client hint. The configured `cookieScheme` name is baked into the script per request. A `matchMedia` listener on the client keeps the class updated if the OS preference changes mid-session.
 
-On the client, `setTheme(name)` and `setDark(bool)` write the same cookies and update the `<style>` element and `<html>` attributes the server originally rendered. The next reload reads those cookies — same result, no flash. `setDark('system')` deletes the dark cookie instead, so subsequent reloads (and the live `matchMedia` listener) follow the OS preference again.
+On the client, `setTheme(name)` writes the theme cookie. `setScheme('light' | 'dark' | 'system')` writes `scheme=light`, `scheme=dark`, or `scheme=system`. All persist across reloads — the server reads the cookie next request and renders the matching state.
 
-When `syncTabs` is enabled (the default), each `setTheme` / `setDark` / `toggleDark` also posts a message on a `BroadcastChannel`. Other tabs of the same origin receive the message, validate it, and apply the change locally — without re-broadcasting or re-writing cookies, so there's no echo. `BroadcastChannel` is already same-origin scoped, so messages can't cross between sites.
+When `syncTabs` is enabled (the default), each `setTheme` / `setScheme` / `toggleScheme` also posts a message on a `BroadcastChannel`. Other tabs of the same origin receive the message, validate it, and apply the change locally — without re-broadcasting or re-writing cookies, so there's no echo. `BroadcastChannel` is already same-origin scoped, so messages can't cross between sites.
 
 ## License
 

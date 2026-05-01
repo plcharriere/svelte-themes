@@ -3,7 +3,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { getThemes, getCurrentTheme, setTheme, isDark, setDark, isLoadingTheme } from '$lib';
+	import { getThemes, getCurrentTheme, setTheme, setScheme, toggleScheme, isLoadingTheme } from '$lib';
 
 	let { children } = $props();
 
@@ -104,7 +104,7 @@
 				type="button"
 				aria-label="Toggle dark mode"
 				onclick={(e) =>
-					withTransition(() => setDark(!isDark()), {
+					withTransition(() => toggleScheme(), {
 						x: e.clientX,
 						y: e.clientY
 					})}
@@ -147,7 +147,7 @@
 				aria-label="Use system color scheme"
 				title="Use system color scheme"
 				onclick={(e) =>
-					withTransition(() => setDark('system'), {
+					withTransition(() => setScheme('system'), {
 						x: e.clientX,
 						y: e.clientY
 					})}

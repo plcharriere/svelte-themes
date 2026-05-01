@@ -47,5 +47,5 @@ createThemes({
     "violet-bloom": () => import("./themes/violet-bloom.css?inline"),
   },
   defaultTheme: "default",
-  defaultDark: false,
+  defaultScheme: "system",
 });

@@ -4,10 +4,11 @@ export {
 	getCurrentTheme,
 	setTheme,
 	isDark,
-	getDark,
-	setDark,
-	toggleDark,
+	getScheme,
+	getSchemeSource,
+	setScheme,
+	toggleScheme,
 	isLoadingTheme,
 	getLoadingTheme
 } from './theme.svelte.js';
-export type { ThemesConfig, ThemeLoader } from './types.js';
+export type { ThemesConfig, ThemeLoader, Scheme } from './types.js';

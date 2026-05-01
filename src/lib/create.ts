@@ -14,23 +14,23 @@ export function createThemes(options: ThemesConfig): void {
 		throw new Error(`createThemes: defaultTheme "${defaultTheme}" not found`);
 	}
 	const cookieTheme = options.cookieTheme ?? 'theme';
-	const cookieDark = options.cookieDark ?? 'theme-dark';
+	const cookieScheme = options.cookieScheme ?? 'scheme';
 	if (!COOKIE_NAME_RE.test(cookieTheme)) {
 		throw new Error(
 			`createThemes: cookieTheme "${cookieTheme}" must match ${COOKIE_NAME_RE}`
 		);
 	}
-	if (!COOKIE_NAME_RE.test(cookieDark)) {
+	if (!COOKIE_NAME_RE.test(cookieScheme)) {
 		throw new Error(
-			`createThemes: cookieDark "${cookieDark}" must match ${COOKIE_NAME_RE}`
+			`createThemes: cookieScheme "${cookieScheme}" must match ${COOKIE_NAME_RE}`
 		);
 	}
 	setConfig({
 		themes: options.themes,
 		defaultTheme,
-		defaultDark: options.defaultDark ?? false,
+		defaultScheme: options.defaultScheme ?? 'system',
 		cookieTheme,
-		cookieDark,
+		cookieScheme,
 		syncTabs: options.syncTabs ?? true,
 		syncChannel: options.syncChannel ?? 'svelte-themes'
 	});

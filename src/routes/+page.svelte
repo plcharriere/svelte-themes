@@ -1,13 +1,31 @@
 <script lang="ts">
-	import { getCurrentTheme, isDark, getDark } from '$lib';
+	import { getCurrentTheme, isDark, getScheme, getSchemeSource } from '$lib';
 </script>
 
 <div class="max-w-5xl space-y-8">
-	<header>
-		<p class="text-muted-foreground">
-			Active theme: <code class="font-mono text-sm">{getCurrentTheme()}</code> ·
-			{isDark() ? 'dark' : 'light'} ({getDark() === 'system' ? 'system' : 'cookie'})
-		</p>
+	<header
+		class="bg-card text-card-foreground border border-border rounded-lg px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm"
+	>
+		<div class="flex items-center gap-2">
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Theme</span>
+			<code class="font-mono">{getCurrentTheme()}</code>
+		</div>
+		<div class="h-4 w-px bg-border"></div>
+		<div class="flex items-center gap-2">
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Mode</span>
+			<code class="font-mono">
+				{#if getScheme() === 'system'}
+					system <span class="text-muted-foreground">({isDark() ? 'dark' : 'light'})</span>
+				{:else}
+					{isDark() ? 'dark' : 'light'}
+				{/if}
+			</code>
+		</div>
+		<div class="h-4 w-px bg-border"></div>
+		<div class="flex items-center gap-2">
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Source</span>
+			<code class="font-mono">{getSchemeSource()}</code>
+		</div>
 	</header>
 
 	<section class="grid gap-6 md:grid-cols-2">

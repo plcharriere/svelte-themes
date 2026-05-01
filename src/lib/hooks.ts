@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { getConfig, loadCss } from './config.js';
 import { runWithTheme } from './ssr-store.js';
+import type { Scheme } from './types.js';
 
 const HTML_ATTR_ESCAPES: Record<string, string> = {
 	'&': '&amp;',
@@ -18,9 +19,10 @@ function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildBootScript(cookieName: string): string {
+function buildBootScript(cookieName: string, defaultIsSystem: boolean): string {
 	const safe = regexEscape(cookieName);
-	return `<script>(function(){try{if(!new RegExp('(?:^|;\\\\s*)${safe}=').test(document.cookie)){document.documentElement.classList.toggle('dark',matchMedia('(prefers-color-scheme: dark)').matches);}}catch(e){}})();</script>`;
+	const fallback = defaultIsSystem ? 'true' : 'false';
+	return `<script>(function(){try{var m=document.cookie.match(new RegExp('(?:^|;\\\\s*)${safe}=([^;]*)'));var v=m?m[1]:null;if(v==='system'||(v===null&&${fallback})){document.documentElement.classList.toggle('dark',matchMedia('(prefers-color-scheme: dark)').matches);}}catch(e){}})();</script>`;
 }
 
 export function createThemesHandle(): Handle {
@@ -31,16 +33,32 @@ export function createThemesHandle(): Handle {
 		const name =
 			requested && Object.hasOwn(cfg.themes, requested) ? requested : cfg.defaultTheme;
 
-		const darkCookie = event.cookies.get(cfg.cookieDark);
+		const schemeCookie = event.cookies.get(cfg.cookieScheme);
 		let dark: boolean;
-		let darkSource: 'cookie' | 'system';
-		if (darkCookie === '1' || darkCookie === '0') {
-			dark = darkCookie === '1';
-			darkSource = 'cookie';
-		} else {
+		let scheme: Scheme;
+		let schemeSource: 'cookie' | 'default';
+		if (schemeCookie === 'dark') {
+			dark = true;
+			scheme = 'dark';
+			schemeSource = 'cookie';
+		} else if (schemeCookie === 'light') {
+			dark = false;
+			scheme = 'light';
+			schemeSource = 'cookie';
+		} else if (schemeCookie === 'system') {
 			const hint = event.request.headers.get('sec-ch-prefers-color-scheme');
-			dark = hint ? hint === 'dark' : cfg.defaultDark;
-			darkSource = 'system';
+			dark = hint === 'dark';
+			scheme = 'system';
+			schemeSource = 'cookie';
+		} else if (cfg.defaultScheme === 'system') {
+			const hint = event.request.headers.get('sec-ch-prefers-color-scheme');
+			dark = hint === 'dark';
+			scheme = 'system';
+			schemeSource = 'default';
+		} else {
+			scheme = cfg.defaultScheme;
+			dark = scheme === 'dark';
+			schemeSource = 'default';
 		}
 
 		event.setHeaders({
@@ -51,9 +69,9 @@ export function createThemesHandle(): Handle {
 		const css = await loadCss(name);
 		const safeCss = css.replace(/<\/style>/gi, '<\\/style>');
 		const safeName = htmlAttrEscape(name);
-		const bootScript = buildBootScript(cfg.cookieDark);
+		const bootScript = buildBootScript(cfg.cookieScheme, cfg.defaultScheme === 'system');
 
-		return runWithTheme({ theme: name, dark, darkSource }, () =>
+		return runWithTheme({ theme: name, dark, scheme, schemeSource }, () =>
 			resolve(event, {
 				transformPageChunk: ({ html }) =>
 					html

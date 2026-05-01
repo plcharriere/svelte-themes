@@ -1,9 +1,12 @@
 import { BROWSER } from 'esm-env';
 
+import type { Scheme } from './types.js';
+
 type RequestState = {
 	theme: string;
 	dark: boolean;
-	darkSource: 'cookie' | 'system';
+	scheme: Scheme;
+	schemeSource: 'cookie' | 'default';
 };
 
 type Storage = {
