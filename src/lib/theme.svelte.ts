@@ -24,10 +24,10 @@ function setCookie(name: string, value: string): void {
 }
 
 function applyTheme(name: string, css: string): void {
-	let style = document.getElementById('svelte-theme') as HTMLStyleElement | null;
+	let style = document.getElementById('svelte-themes') as HTMLStyleElement | null;
 	if (!style) {
 		style = document.createElement('style');
-		style.id = 'svelte-theme';
+		style.id = 'svelte-themes';
 		document.head.appendChild(style);
 	}
 	style.textContent = css;

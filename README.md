@@ -101,7 +101,7 @@ export const handle = createThemesHandle();
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style id="svelte-theme">%theme-css%</style>
+    <style id="svelte-themes">%theme-css%</style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
@@ -152,7 +152,7 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 </select>
 ```
 
-`setTheme` and `setDark` write the configured cookies (defaults `theme` and `theme-dark`) so the choice survives reloads. `setDark('system')` clears the dark cookie and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-theme">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getDark()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
+`setTheme` and `setDark` write the configured cookies (defaults `theme` and `theme-dark`) so the choice survives reloads. `setDark('system')` clears the dark cookie and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-themes">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getDark()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
 
 `isDark()` returns the **resolved** dark state (always a boolean, regardless of source). `getDark()` returns the **explicit** state — `true` / `false` for cookie, `'system'` for no cookie. Use `isDark()` for visual logic ("show the moon icon"), `getDark()` for binding 3-way controls.
 
