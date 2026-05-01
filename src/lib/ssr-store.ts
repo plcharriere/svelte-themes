@@ -4,6 +4,7 @@ import type { Scheme } from './types.js';
 
 type RequestState = {
 	theme: string;
+	themeSource: 'cookie' | 'default';
 	dark: boolean;
 	scheme: Scheme;
 	schemeSource: 'cookie' | 'default';

@@ -30,8 +30,9 @@ export function createThemesHandle(): Handle {
 		const cfg = getConfig();
 
 		const requested = event.cookies.get(cfg.cookieTheme);
-		const name =
-			requested && Object.hasOwn(cfg.themes, requested) ? requested : cfg.defaultTheme;
+		const hasThemeCookie = requested !== undefined && Object.hasOwn(cfg.themes, requested);
+		const name = hasThemeCookie ? requested : cfg.defaultTheme;
+		const themeSource: 'cookie' | 'default' = hasThemeCookie ? 'cookie' : 'default';
 
 		const schemeCookie = event.cookies.get(cfg.cookieScheme);
 		let dark: boolean;
@@ -71,7 +72,7 @@ export function createThemesHandle(): Handle {
 		const safeName = htmlAttrEscape(name);
 		const bootScript = buildBootScript(cfg.cookieScheme, cfg.defaultScheme === 'system');
 
-		return runWithTheme({ theme: name, dark, scheme, schemeSource }, () =>
+		return runWithTheme({ theme: name, themeSource, dark, scheme, schemeSource }, () =>
 			resolve(event, {
 				transformPageChunk: ({ html }) =>
 					html

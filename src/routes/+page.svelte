@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getCurrentTheme, isDark, getScheme, getSchemeSource } from '$lib';
+	import { getCurrentTheme, getThemeSource, isDark, getScheme, getSchemeSource } from '$lib';
 </script>
 
 <div class="max-w-5xl space-y-8">
@@ -8,23 +8,22 @@
 	>
 		<div class="flex items-center gap-2">
 			<span class="text-muted-foreground text-xs uppercase tracking-wider">Theme</span>
-			<code class="font-mono">{getCurrentTheme()}</code>
-		</div>
-		<div class="h-4 w-px bg-border"></div>
-		<div class="flex items-center gap-2">
-			<span class="text-muted-foreground text-xs uppercase tracking-wider">Mode</span>
 			<code class="font-mono">
-				{#if getScheme() === 'system'}
-					system <span class="text-muted-foreground">({isDark() ? 'dark' : 'light'})</span>
-				{:else}
-					{isDark() ? 'dark' : 'light'}
-				{/if}
+				{getCurrentTheme()}
+				<span class="text-muted-foreground">({getThemeSource()})</span>
 			</code>
 		</div>
 		<div class="h-4 w-px bg-border"></div>
 		<div class="flex items-center gap-2">
-			<span class="text-muted-foreground text-xs uppercase tracking-wider">Source</span>
-			<code class="font-mono">{getSchemeSource()}</code>
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Scheme</span>
+			<code class="font-mono">
+				{#if getScheme() === 'system'}
+					system <span class="text-muted-foreground">→ {isDark() ? 'dark' : 'light'}</span>
+				{:else}
+					{getScheme()}
+				{/if}
+				<span class="text-muted-foreground">({getSchemeSource()})</span>
+			</code>
 		</div>
 	</header>
 

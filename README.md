@@ -148,11 +148,26 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 
 `setTheme` and `setScheme` write the configured cookies (defaults `theme` and `scheme`) so the choice survives reloads. `setScheme('system')` writes `scheme=system` and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-themes">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getScheme()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
 
-Three orthogonal accessors:
+For each axis, three accessors give you current value, default, and source:
+
+**Theme**
+
+- **`getCurrentTheme()`** → `string` — the active theme name.
+- **`getDefaultTheme()`** → `string` — the configured default. Useful for a "Reset to default" button without hardcoding the name.
+- **`getThemeSource()`** → `'cookie' | 'default'` — `'cookie'` if the user explicitly picked a theme, `'default'` if no cookie is set and `defaultTheme` is being used.
+
+**Scheme**
 
 - **`isDark()`** → `boolean` — the **resolved** dark state. Always a boolean, regardless of how it was decided. Use for visual logic ("show the moon icon").
 - **`getScheme()`** → `'light' | 'dark' | 'system'` — the **value** the user (or config) chose. Returns `'system'` when the user is following the OS, `'light'`/`'dark'` when they explicitly picked. Use for binding a 3-way Light / Dark / System control.
-- **`getSchemeSource()`** → `'cookie' | 'default'` — where the value came from. `'cookie'` if the user explicitly chose anything (including `'system'`), `'default'` if no cookie is set and `defaultScheme` from config is being used.
+- **`getDefaultScheme()`** → `'light' | 'dark' | 'system'` — the configured default.
+- **`getSchemeSource()`** → `'cookie' | 'default'` — `'cookie'` if the user explicitly chose anything (including `'system'`), `'default'` if no cookie is set and `defaultScheme` is being used.
+
+```svelte
+<button onclick={() => { setTheme(getDefaultTheme()); setScheme(getDefaultScheme()); }}>
+  Reset to defaults
+</button>
+```
 
 ### Loading state
 
@@ -192,28 +207,47 @@ Both functions also fire when **another tab** broadcasts a theme change and this
 - **Cookie-persisted** — the choice survives reloads and works across server and client without `localStorage` hacks.
 - **Respects `prefers-color-scheme`** — when the user is in system mode (default, or `setScheme('system')`), the library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Set `defaultScheme: 'light'` or `'dark'` to ignore the OS preference for first-time visitors; users can still opt into system at any point via `setScheme('system')`.
 - **Cross-tab sync** — switching theme or scheme in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
-- **Reactive reads** — `getCurrentTheme()`, `isDark()`, `getScheme()`, `getSchemeSource()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
+- **Reactive reads** — `getCurrentTheme()`, `getThemeSource()`, `isDark()`, `getScheme()`, `getSchemeSource()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
 - **Lazy-loaded** — each theme is a dynamic import. The server only loads the active theme; the client only fetches a theme on first switch, then caches it.
 - **Plain CSS** — themes are CSS files. Bring your own variables, your own Tailwind setup, your own conventions.
 - **Independent scheme toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
 
 ## API
 
+### Setup
+
 | Export | Purpose |
 | --- | --- |
-| `createThemes(config)` | Setup. Registers themes, default theme, default scheme. |
-| `setTheme(name, scheme?)` | Switch theme, optionally also set scheme (`'light' \| 'dark' \| 'system'`). Async. |
-| `getCurrentTheme()` | Active theme name. |
+| `createThemes(config)` | Register themes, default theme, default scheme. |
+| `createThemesHandle()` | Server entry (`@plcharriere/svelte-themes/server`). |
+
+### Theme
+
+| Export | Purpose |
+| --- | --- |
+| `setTheme(name, scheme?)` | Switch theme, optionally also set scheme. Async. |
 | `getThemes()` | All registered theme names. |
-| `setScheme(scheme)` | Set scheme independently. `scheme: 'light' \| 'dark' \| 'system'`. |
+| `getCurrentTheme()` | Active theme name. |
+| `getDefaultTheme()` | Configured default theme name. |
+| `getThemeSource()` | `'cookie'` (user picked) / `'default'` (config fallback). |
+
+### Scheme
+
+| Export | Purpose |
+| --- | --- |
+| `setScheme(scheme)` | Set scheme. `scheme: 'light' \| 'dark' \| 'system'`. |
 | `toggleScheme()` | Flip between `'light'` and `'dark'`. |
 | `getScheme()` | The chosen value — `'light'` / `'dark'` / `'system'`. |
-| `getSchemeSource()` | Where the value came from — `'cookie'` (user picked) / `'default'` (config fallback). |
+| `getDefaultScheme()` | Configured default scheme. |
+| `getSchemeSource()` | `'cookie'` (user picked) / `'default'` (config fallback). |
 | `isDark()` | Resolved dark state — always boolean. |
-| `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to ask "is *this* theme loading?". |
-| `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
 
-Server entry (`@plcharriere/svelte-themes/server`): `createThemesHandle()`.
+### Loading
+
+| Export | Purpose |
+| --- | --- |
+| `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to scope. |
+| `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
 
 ## Config options
 

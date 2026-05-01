@@ -9,6 +9,7 @@ type SyncMessage =
 type SchemeCookieValue = Scheme | null;
 
 let themeState = $state<string | null>(null);
+let themeCookieValue = $state<string | null>(null);
 let darkState = $state<boolean | null>(null);
 let schemeCookieValue = $state<SchemeCookieValue>(null);
 let pendingLoads = $state<number>(0);
@@ -25,6 +26,15 @@ function readSchemeCookie(): SchemeCookieValue {
 	const v = decodeURIComponent(m[1]);
 	if (v === 'light' || v === 'dark' || v === 'system') return v;
 	return null;
+}
+
+function readThemeCookie(): string | null {
+	const cfg = getConfig();
+	const re = new RegExp(`(?:^|;\\s*)${regexEscape(cfg.cookieTheme)}=([^;]*)`);
+	const m = document.cookie.match(re);
+	if (!m) return null;
+	const v = decodeURIComponent(m[1]);
+	return Object.hasOwn(cfg.themes, v) ? v : null;
 }
 
 function setCookie(name: string, value: string): void {
@@ -65,6 +75,17 @@ export function getCurrentTheme(): string {
 	return themeState ?? document.documentElement.dataset.theme ?? getConfig().defaultTheme;
 }
 
+export function getDefaultTheme(): string {
+	return getConfig().defaultTheme;
+}
+
+export function getThemeSource(): 'cookie' | 'default' {
+	if (typeof document === 'undefined') {
+		return getServerTheme()?.themeSource ?? 'default';
+	}
+	return themeCookieValue === null ? 'default' : 'cookie';
+}
+
 export async function setTheme(name: string, scheme?: Scheme): Promise<void> {
 	if (typeof document === 'undefined') return;
 	const cfg = getConfig();
@@ -79,6 +100,7 @@ export async function setTheme(name: string, scheme?: Scheme): Promise<void> {
 		if (callId !== latestCall) return;
 		applyTheme(name, css);
 		setCookie(cfg.cookieTheme, name);
+		themeCookieValue = name;
 		bc?.postMessage({ kind: 'theme', name } satisfies SyncMessage);
 		if (scheme !== undefined) setScheme(scheme);
 	} finally {
@@ -117,6 +139,10 @@ export function getScheme(): Scheme {
 	return cfg.defaultScheme;
 }
 
+export function getDefaultScheme(): Scheme {
+	return getConfig().defaultScheme;
+}
+
 export function getSchemeSource(): 'cookie' | 'default' {
 	if (typeof document === 'undefined') {
 		return getServerTheme()?.schemeSource ?? 'default';
@@ -152,6 +178,7 @@ export function initClient(): void {
 	bc = null;
 
 	themeState = document.documentElement.dataset.theme ?? null;
+	themeCookieValue = readThemeCookie();
 	darkState = document.documentElement.classList.contains('dark');
 	schemeCookieValue = readSchemeCookie();
 
@@ -195,6 +222,7 @@ export function initClient(): void {
 					.then((css) => {
 						if (callId !== latestCall) return;
 						applyTheme(msg.name, css);
+						themeCookieValue = msg.name;
 					})
 					.catch((err) => {
 						console.error('[svelte-themes] failed to apply broadcast theme:', err);

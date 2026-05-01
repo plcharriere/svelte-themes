@@ -1,6 +1,6 @@
 {
 	"name": "@plcharriere/svelte-themes",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "SSR-safe theme switching for SvelteKit 2 + Svelte 5. Plain CSS themes, cookie-persisted, prefers-color-scheme aware, with live cross-tab sync.",
 	"keywords": [
 		"svelte",

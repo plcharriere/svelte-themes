@@ -2,9 +2,12 @@ export { createThemes } from './create.js';
 export {
 	getThemes,
 	getCurrentTheme,
+	getDefaultTheme,
+	getThemeSource,
 	setTheme,
 	isDark,
 	getScheme,
+	getDefaultScheme,
 	getSchemeSource,
 	setScheme,
 	toggleScheme,
