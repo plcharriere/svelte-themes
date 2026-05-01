@@ -46,6 +46,6 @@ createThemes({
     "vintage-paper": () => import("./themes/vintage-paper.css?inline"),
     "violet-bloom": () => import("./themes/violet-bloom.css?inline"),
   },
-  defaultTheme: "bubblegum",
+  defaultTheme: "default",
   defaultDark: false,
 });
