@@ -6,6 +6,8 @@ export {
 	isDark,
 	getDark,
 	setDark,
-	toggleDark
+	toggleDark,
+	isLoadingTheme,
+	getLoadingTheme
 } from './theme.svelte.js';
 export type { ThemesConfig, ThemeLoader } from './types.js';

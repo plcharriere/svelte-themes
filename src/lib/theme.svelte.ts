@@ -8,6 +8,8 @@ type SyncMessage =
 let themeState = $state<string | null>(null);
 let darkState = $state<boolean | null>(null);
 let darkCookieSet = $state<boolean>(false);
+let pendingLoads = $state<number>(0);
+let loadingName = $state<string | null>(null);
 
 function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -63,12 +65,28 @@ export async function setTheme(name: string, dark?: boolean | 'system'): Promise
 		throw new Error(`Unknown theme: ${name}`);
 	}
 	const callId = ++latestCall;
-	const css = await loadCss(name);
-	if (callId !== latestCall) return;
-	applyTheme(name, css);
-	setCookie(cfg.cookieTheme, name);
-	bc?.postMessage({ kind: 'theme', name } satisfies SyncMessage);
-	if (dark !== undefined) setDark(dark);
+	pendingLoads++;
+	loadingName = name;
+	try {
+		const css = await loadCss(name);
+		if (callId !== latestCall) return;
+		applyTheme(name, css);
+		setCookie(cfg.cookieTheme, name);
+		bc?.postMessage({ kind: 'theme', name } satisfies SyncMessage);
+		if (dark !== undefined) setDark(dark);
+	} finally {
+		pendingLoads--;
+		if (callId === latestCall) loadingName = null;
+	}
+}
+
+export function isLoadingTheme(name?: string): boolean {
+	if (name === undefined) return pendingLoads > 0;
+	return loadingName === name;
+}
+
+export function getLoadingTheme(): string | null {
+	return loadingName;
 }
 
 export function isDark(): boolean {
@@ -150,6 +168,8 @@ export function initClient(): void {
 				Object.hasOwn(getConfig().themes, msg.name)
 			) {
 				const callId = ++latestCall;
+				pendingLoads++;
+				loadingName = msg.name;
 				loadCss(msg.name)
 					.then((css) => {
 						if (callId !== latestCall) return;
@@ -157,6 +177,10 @@ export function initClient(): void {
 					})
 					.catch((err) => {
 						console.error('[svelte-themes] failed to apply broadcast theme:', err);
+					})
+					.finally(() => {
+						pendingLoads--;
+						if (callId === latestCall) loadingName = null;
 					});
 			}
 		});

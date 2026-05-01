@@ -156,13 +156,45 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 
 `isDark()` returns the **resolved** dark state (always a boolean, regardless of source). `getDark()` returns the **explicit** state — `true` / `false` for cookie, `'system'` for no cookie. Use `isDark()` for visual logic ("show the moon icon"), `getDark()` for binding 3-way controls.
 
+### Loading state
+
+Theme chunks are dynamic imports — the **first** switch to a theme fetches its CSS chunk over the network. While that's in flight you can show a loading indicator:
+
+```svelte
+<script>
+  import { isLoadingTheme, getLoadingTheme, setTheme } from '@plcharriere/svelte-themes';
+</script>
+
+<!-- global progress bar — shown while any theme is loading -->
+{#if isLoadingTheme()}
+  <div class="fixed top-0 inset-x-0 h-1 bg-primary z-50 animate-pulse"></div>
+{/if}
+
+<!-- per-button spinner — shown only on the button being loaded -->
+{#each getThemes() as name}
+  <button onclick={() => setTheme(name)}>
+    {name}
+    {#if isLoadingTheme(name)}
+      <svg class="animate-spin w-3 h-3"><!-- ... --></svg>
+    {/if}
+  </button>
+{/each}
+
+<!-- or read the loading name as a string -->
+{#if getLoadingTheme()}
+  <p>Loading {getLoadingTheme()}…</p>
+{/if}
+```
+
+Both functions also fire when **another tab** broadcasts a theme change and this tab needs to fetch the chunk to keep up. After cache, switching is instant and these stay false.
+
 ## Features
 
 - **SSR-safe** — the active theme's CSS is inlined into the HTML on the server. No flash on reload.
 - **Cookie-persisted** — the choice survives reloads and works across server and client without `localStorage` hacks.
 - **Respects `prefers-color-scheme`** — first-time visitors get their OS preference. The library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Cookie wins once the user explicitly toggles.
 - **Cross-tab sync** — switching theme or dark in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
-- **Reactive reads** — `getCurrentTheme()`, `isDark()`, and `getDark()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates and OS preference changes flow into your components with no manual subscription.
+- **Reactive reads** — `getCurrentTheme()`, `isDark()`, `getDark()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
 - **Lazy-loaded** — each theme is a dynamic import. The server only loads the active theme; the client only fetches a theme on first switch, then caches it.
 - **Plain CSS** — themes are CSS files. Bring your own variables, your own Tailwind setup, your own conventions.
 - **Independent dark toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
@@ -179,6 +211,8 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 | `getThemes()` | All registered theme names. |
 | `isDark()` | Resolved dark state — always boolean. |
 | `getDark()` | Explicit choice — `true` / `false` / `'system'`. |
+| `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to ask "is *this* theme loading?". |
+| `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
 
 Server entry (`@plcharriere/svelte-themes/server`): `createThemesHandle()`.
 

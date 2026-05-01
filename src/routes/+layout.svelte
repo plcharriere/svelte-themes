@@ -3,7 +3,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { getThemes, getCurrentTheme, setTheme, isDark, setDark } from '$lib';
+	import { getThemes, getCurrentTheme, setTheme, isDark, setDark, isLoadingTheme } from '$lib';
 
 	let { children } = $props();
 
@@ -46,15 +46,23 @@
 
 <svelte:head>
 	<title>@plcharriere/svelte-themes</title>
+	<meta
+		name="description"
+		content="SSR-safe theme switching for SvelteKit 2 + Svelte 5. Plain CSS themes, cookie-persisted, prefers-color-scheme aware, with live cross-tab sync."
+	/>
 	<link rel="icon" href="/favicon.svg" />
 </svelte:head>
+
+{#if isLoadingTheme()}
+	<div class="fixed top-0 left-0 right-0 h-1 bg-primary z-50 animate-pulse"></div>
+{/if}
 
 <div class="min-h-screen bg-background text-foreground font-sans flex">
 	<aside
 		class="bg-background text-foreground border-r border-border w-64 shrink-0 p-6 flex flex-col gap-6 sticky top-0 h-screen"
 	>
 		<div>
-			<h1 class="font-serif text-xl font-bold">@plcharriere/svelte-themes</h1>
+			<h1 class="font-serif text-xl font-bold break-words">@plcharriere/svelte-themes</h1>
 			<p class="text-muted-foreground mt-1 text-xs">Pick a theme below.</p>
 		</div>
 
@@ -63,15 +71,29 @@
 			<div class="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-3 pr-3">
 				{#each themes as name}
 					{@const active = page.url.pathname === '/' && getCurrentTheme() === name}
+					{@const loading = isLoadingTheme(name)}
 					<button
 						type="button"
 						onclick={(e) => pickTheme(e, name)}
 						aria-pressed={active}
-						class="w-full text-left rounded-md px-3 py-2 text-sm cursor-pointer {active
+						class="w-full text-left rounded-md px-3 py-2 text-sm cursor-pointer flex items-center justify-between gap-2 {active
 							? 'bg-primary text-primary-foreground'
 							: 'hover:bg-accent hover:text-accent-foreground'}"
 					>
-						{prettify(name)}
+						<span>{prettify(name)}</span>
+						{#if loading}
+							<svg
+								class="animate-spin w-3.5 h-3.5 shrink-0"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="3"
+								aria-hidden="true"
+							>
+								<circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+								<path d="M12 2 a10 10 0 0 1 10 10" stroke-linecap="round" />
+							</svg>
+						{/if}
 					</button>
 				{/each}
 			</div>
