@@ -61,7 +61,14 @@ Each theme file is self-contained — bring your own Tailwind import, `@theme in
 // src/themes.ts
 import { createThemes } from '@plcharriere/svelte-themes';
 
-createThemes({
+export const {
+  setTheme,
+  getThemes,
+  getCurrentTheme,
+  getDefaultTheme,
+  isLoadingTheme,
+  getLoadingTheme
+} = createThemes({
   themes: {
     bubblegum: () => import('./themes/bubblegum.css?inline'),
     candyland: () => import('./themes/candyland.css?inline')
@@ -71,7 +78,29 @@ createThemes({
 });
 ```
 
+`createThemes` is generic over the themes record, so the returned `setTheme(name)`, `getCurrentTheme()`, etc. are typed against your specific theme names — `setTheme('blubgegum')` is a TS error, autocomplete works, switch statements narrow correctly.
+
+Functions that don't depend on the themes config — `setScheme`, `toggleScheme`, `isDark`, `getScheme`, `getDefaultScheme`, `getSchemeSource`, and `getThemeSource` — are imported directly from `@plcharriere/svelte-themes`. Only the functions whose signatures narrow against your theme names live on the handle.
+
 Each theme is a dynamic import. Vite emits one chunk per theme — only the active one is loaded on the server, only the one being switched to is fetched on the client.
+
+**Alternative — untyped pattern.** If you don't care about theme-name narrowing, you can discard the return value and import the loosely-typed functions from the package root:
+
+```ts
+// src/themes.ts
+import { createThemes } from '@plcharriere/svelte-themes';
+
+createThemes({ themes: { ... } });
+```
+
+```ts
+// anywhere
+import { setTheme, getCurrentTheme } from '@plcharriere/svelte-themes';
+
+setTheme('bubblegum');           // name: string — no autocomplete, no typo check
+```
+
+Same runtime behavior, same reactive state — you just lose `keyof T` narrowing on the theme-axis functions. The scheme functions (`setScheme`, `isDark`, etc.) are identical either way.
 
 ### 3. Wire SvelteKit
 
@@ -86,7 +115,7 @@ export const handle = createThemesHandle();
 ```svelte
 <!-- src/routes/+layout.svelte -->
 <script>
-  import '../themes';
+  import '../themes'; // ensures createThemes() runs on the client
 
   let { children } = $props();
 </script>
@@ -116,14 +145,14 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 
 ```svelte
 <script>
+  import { getThemes, getCurrentTheme, setTheme } from '../themes';
   import {
-    getThemes,
-    getCurrentTheme,
-    setTheme,
     isDark,
     getScheme,
     setScheme,
-    toggleScheme
+    toggleScheme,
+    getThemeSource,
+    getSchemeSource
   } from '@plcharriere/svelte-themes';
 </script>
 

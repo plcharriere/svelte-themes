@@ -14,4 +14,4 @@ export {
 	isLoadingTheme,
 	getLoadingTheme
 } from './theme.svelte.js';
-export type { ThemesConfig, ThemeLoader, Scheme } from './types.js';
+export type { ThemesConfig, ThemesAPI, ThemeLoader, Scheme } from './types.js';

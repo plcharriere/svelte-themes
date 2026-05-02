@@ -1,6 +1,13 @@
 import { createThemes } from '$lib';
 
-createThemes({
+export const {
+	setTheme,
+	getThemes,
+	getCurrentTheme,
+	getDefaultTheme,
+	isLoadingTheme,
+	getLoadingTheme
+} = createThemes({
 	themes: {
 		default: () => import('./themes/default.css?inline'),
 		'amber-minimal': () => import('./themes/amber-minimal.css?inline'),

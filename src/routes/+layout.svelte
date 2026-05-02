@@ -1,13 +1,14 @@
 <script lang="ts">
-	import '../themes';
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { getThemes, getCurrentTheme, setTheme, setScheme, toggleScheme, isLoadingTheme } from '$lib';
+	import { getThemes, getCurrentTheme, setTheme, isLoadingTheme } from '../themes';
+	import { setScheme, toggleScheme } from '$lib';
 
 	let { children } = $props();
 
 	const themes = getThemes();
+	let sidebarOpen = $state(false);
 
 	function prettify(name: string): string {
 		return name
@@ -41,6 +42,7 @@
 			},
 			{ x: e.clientX, y: e.clientY }
 		);
+		sidebarOpen = false;
 	}
 </script>
 
@@ -57,9 +59,44 @@
 	<div class="fixed top-0 left-0 right-0 h-1 bg-primary z-50 animate-pulse"></div>
 {/if}
 
-<div class="min-h-screen bg-background text-foreground font-sans flex">
+<button
+	type="button"
+	aria-label="Open theme picker"
+	aria-expanded={sidebarOpen}
+	onclick={() => (sidebarOpen = true)}
+	class="md:hidden fixed top-3 left-3 z-30 grid place-items-center w-10 h-10 rounded-md bg-card text-card-foreground border border-border shadow"
+>
+	<svg
+		width="20"
+		height="20"
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		stroke-width="2"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		aria-hidden="true"
+	>
+		<line x1="4" x2="20" y1="6" y2="6" />
+		<line x1="4" x2="20" y1="12" y2="12" />
+		<line x1="4" x2="20" y1="18" y2="18" />
+	</svg>
+</button>
+
+{#if sidebarOpen}
+	<button
+		type="button"
+		aria-label="Close theme picker"
+		onclick={() => (sidebarOpen = false)}
+		class="md:hidden fixed inset-0 z-30 bg-black/50"
+	></button>
+{/if}
+
+<div class="min-h-screen bg-background text-foreground font-sans md:flex">
 	<aside
-		class="bg-background text-foreground border-r border-border w-64 shrink-0 p-6 flex flex-col gap-6 sticky top-0 h-screen"
+		class="bg-background text-foreground border-r border-border w-64 shrink-0 p-6 flex flex-col gap-6 fixed inset-y-0 left-0 z-40 transition-transform md:sticky md:top-0 md:h-screen md:translate-x-0 {sidebarOpen
+			? 'translate-x-0'
+			: '-translate-x-full'}"
 	>
 		<div>
 			<h1 class="font-serif text-xl font-bold break-words">@plcharriere/svelte-themes</h1>
@@ -205,7 +242,7 @@
 		</div>
 	</aside>
 
-	<main class="flex-1 p-8">
+	<main class="flex-1 p-4 pt-16 md:p-8">
 		{@render children()}
 	</main>
 </div>

@@ -1,15 +1,25 @@
 import { setConfig } from './config.js';
-import { initClient } from './theme.svelte.js';
-import type { ThemesConfig } from './types.js';
+import {
+	getCurrentTheme,
+	getDefaultTheme,
+	getLoadingTheme,
+	getThemes,
+	initClient,
+	isLoadingTheme,
+	setTheme
+} from './theme.svelte.js';
+import type { ThemeLoader, ThemesAPI, ThemesConfig } from './types.js';
 
 const COOKIE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
-export function createThemes(options: ThemesConfig): void {
+export function createThemes<T extends Record<string, ThemeLoader>>(
+	options: ThemesConfig<T>
+): ThemesAPI<T> {
 	const names = Object.keys(options.themes);
 	if (names.length === 0) {
 		throw new Error('createThemes: no themes provided');
 	}
-	const defaultTheme = options.defaultTheme ?? names[0];
+	const defaultTheme = options.defaultTheme ?? (names[0] as keyof T & string);
 	if (!Object.hasOwn(options.themes, defaultTheme)) {
 		throw new Error(`createThemes: defaultTheme "${defaultTheme}" not found`);
 	}
@@ -35,4 +45,13 @@ export function createThemes(options: ThemesConfig): void {
 		syncChannel: options.syncChannel ?? 'svelte-themes'
 	});
 	initClient();
+
+	return {
+		setTheme,
+		getThemes,
+		getCurrentTheme,
+		getDefaultTheme,
+		isLoadingTheme,
+		getLoadingTheme
+	} as ThemesAPI<T>;
 }

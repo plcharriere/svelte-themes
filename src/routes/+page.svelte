@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { getCurrentTheme, getThemeSource, isDark, getScheme, getSchemeSource } from '$lib';
+	import { getCurrentTheme } from '../themes';
+	import { getThemeSource, isDark, getScheme, getSchemeSource } from '$lib';
 </script>
 
 <div class="max-w-5xl space-y-8">
