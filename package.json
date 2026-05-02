@@ -1,6 +1,6 @@
 {
 	"name": "@plcharriere/svelte-themes",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"description": "SSR-safe theme switching for SvelteKit 2 + Svelte 5. Plain CSS themes, cookie-persisted, prefers-color-scheme aware, with live cross-tab sync.",
 	"keywords": [
 		"svelte",
@@ -67,6 +67,7 @@
 		"@sveltejs/package": "^2.5.7",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/vite": "^4.2.4",
+		"@types/node": "^25.6.0",
 		"publint": "^0.3.18",
 		"svelte": "^5.55.2",
 		"svelte-check": "^4.4.6",
@@ -74,8 +75,5 @@
 		"typescript": "^6.0.2",
 		"vite": "^8.0.7",
 		"wrangler": "^4.86.0"
-	},
-	"dependencies": {
-		"esm-env": "^1.2.2"
 	}
 }

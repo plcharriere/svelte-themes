@@ -34,7 +34,7 @@
 		document.startViewTransition(fn);
 	}
 
-	function pickTheme(e: MouseEvent, name: string) {
+	function pickTheme(e: MouseEvent, name: Parameters<typeof setTheme>[0]) {
 		withTransition(
 			() => {
 				setTheme(name);

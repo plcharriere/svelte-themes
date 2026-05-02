@@ -1,7 +1,22 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Handle } from '@sveltejs/kit';
 import { getConfig, loadCss } from './config.js';
-import { runWithTheme } from './ssr-store.js';
+import { runWithTheme, setStorage } from './ssr-store.js';
 import type { Scheme } from './types.js';
+
+type RequestState = {
+	theme: string;
+	themeSource: 'cookie' | 'default';
+	dark: boolean;
+	scheme: Scheme;
+	schemeSource: 'cookie' | 'default';
+};
+
+const als = new AsyncLocalStorage<RequestState>();
+setStorage({
+	run: (state, fn) => als.run(state, fn),
+	getStore: () => als.getStore()
+});
 
 const HTML_ATTR_ESCAPES: Record<string, string> = {
 	'&': '&amp;',
