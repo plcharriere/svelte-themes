@@ -1,6 +1,6 @@
 # svelte-themes
 
-SSR-safe, cookie-persisted theme switching for **SvelteKit 2 + Svelte 5**. Themes are plain CSS files, lazy-loaded on demand, with light/dark as an independent toggle that respects `prefers-color-scheme` until the user explicitly chooses.
+SSR-safe, cookie-persisted theme switching for **SvelteKit 2 + Svelte 5**. Themes are plain CSS files, lazy-loaded on demand, with light/dark as an independent toggle that respects `prefers-color-scheme` until the user explicitly chooses. Optional **scoped themes** let `/` and `/admin` carry their own theme choices side-by-side. Cross-tab sync, no flash on reload.
 
 ```ts
 setTheme('bubblegum');           // switch theme, persist via cookie
@@ -30,7 +30,9 @@ yarn add @plcharriere/svelte-themes
 bun add @plcharriere/svelte-themes
 ```
 
-## Usage
+## Quickstart
+
+The 95% path: one set of themes for the whole app. Reach for [scoped themes](#scoped-themes) only when different sections of your site need independent theme choices.
 
 ### 1. Write your themes as plain CSS
 
@@ -78,6 +80,8 @@ export const {
 });
 ```
 
+If different sections of your site need independent theme choices (e.g. a public landing surface and an admin surface), reach for [`createScopedThemes`](#scoped-themes) instead — same library, separate entry point so the scoped machinery only ends up in bundles that use it.
+
 `createThemes` is generic over the themes record, so the returned `setTheme(name)`, `getCurrentTheme()`, etc. are typed against your specific theme names — `setTheme('blubgegum')` is a TS error, autocomplete works, switch statements narrow correctly.
 
 Functions that don't depend on the themes config — `setScheme`, `toggleScheme`, `isDark`, `getScheme`, `getDefaultScheme`, `getSchemeSource`, and `getThemeSource` — are imported directly from `@plcharriere/svelte-themes`. Only the functions whose signatures narrow against your theme names live on the handle.
@@ -90,7 +94,7 @@ Each theme is a dynamic import. Vite emits one chunk per theme — only the acti
 // src/themes.ts
 import { createThemes } from '@plcharriere/svelte-themes';
 
-createThemes({ themes: { ... } });
+createThemes({ themes: { /* ... */ } });
 ```
 
 ```ts
@@ -177,13 +181,22 @@ Three placeholders are filled by the handle on every request: `%theme%` (theme n
 
 `setTheme` and `setScheme` write the configured cookies (defaults `theme` and `scheme`) so the choice survives reloads. `setScheme('system')` writes `scheme=system` and applies `prefers-color-scheme`. The active theme's CSS swaps in instantly via the `<style id="svelte-themes">` element the server already rendered. The `getCurrentTheme()` / `isDark()` / `getScheme()` reads in the template above are reactive — when another tab broadcasts a change, the select's `value` and the dark/light label flip without any extra wiring.
 
+## Theme axis vs scheme axis
+
+The library treats **theme** (the named palette) and **scheme** (light/dark) as two orthogonal axes:
+
+- **Theme** — a name like `'bubblegum'` or `'ocean'` resolving to a CSS file. Set with `setTheme`. Persisted in the `theme` cookie.
+- **Scheme** — `'light' | 'dark' | 'system'`. Set with `setScheme` / `toggleScheme`. Persisted in the `scheme` cookie. Renders as the `dark` class on `<html>`.
+
+Combine freely: `bubblegum` light, `bubblegum` dark, `ocean` light, `ocean` dark.
+
 For each axis, three accessors give you current value, default, and source:
 
 **Theme**
 
 - **`getCurrentTheme()`** → `string` — the active theme name.
 - **`getDefaultTheme()`** → `string` — the configured default. Useful for a "Reset to default" button without hardcoding the name.
-- **`getThemeSource()`** → `'cookie' | 'default'` — `'cookie'` if the user explicitly picked a theme, `'default'` if no cookie is set and `defaultTheme` is being used.
+- **`getThemeSource()`** → `'cookie' | 'default'` — `'cookie'` if the user explicitly picked a theme, `'default'` if no cookie is set and `defaultTheme` is being used. Imported from the package root.
 
 **Scheme**
 
@@ -204,7 +217,12 @@ Theme chunks are dynamic imports — the **first** switch to a theme fetches its
 
 ```svelte
 <script>
-  import { isLoadingTheme, getLoadingTheme, setTheme } from '@plcharriere/svelte-themes';
+  import {
+    isLoadingTheme,
+    getLoadingTheme,
+    getThemes,
+    setTheme
+  } from '@plcharriere/svelte-themes';
 </script>
 
 <!-- global progress bar — shown while any theme is loading -->
@@ -230,37 +248,303 @@ Theme chunks are dynamic imports — the **first** switch to a theme fetches its
 
 Both functions also fire when **another tab** broadcasts a theme change and this tab needs to fetch the chunk to keep up. After cache, switching is instant and these stay false.
 
+## Scoped themes
+
+Same library, opt-in. Reach for scopes when different sections of your site need **independent** theme choices that don't bleed into each other — typically a marketing/landing surface and an admin/dashboard surface.
+
+The mental model: one registry of themes, multiple **scopes** that each pick a subset and a default. The scope active on the current route is resolved automatically from the URL — server-side from the request, client-side reactively from `page.url.pathname`.
+
+Light/dark **scheme** is shared across all scopes by default (it's a user preference, not a section property). A scope can opt into an independent scheme for the rare case where one section must always be light or dark.
+
+### When to reach for it
+
+- `/` should show `sunset` / `ocean`, `/admin` should show `slate` / `graphite`, and switching theme on one must not touch the other.
+- Persistence: a user picks `ocean` on landing, navigates through admin, comes back — landing is still `ocean`. Admin is still whatever they last picked there.
+- One light/dark toggle for the whole app (default), or — explicitly — a section forced to its own scheme.
+
+If your app has one theme system, **stay flat**. Scopes add concepts you don't need.
+
+### Config
+
+```ts
+// src/themes.ts
+import { createScopedThemes } from '@plcharriere/svelte-themes';
+
+export const { landing, admin, getActiveScope } = createScopedThemes({
+  themes: {
+    sunset:   () => import('./themes/sunset.css?inline'),
+    ocean:    () => import('./themes/ocean.css?inline'),
+    slate:    () => import('./themes/slate.css?inline'),
+    graphite: () => import('./themes/graphite.css?inline')
+  },
+
+  // shared scheme — one light/dark for the whole app
+  defaultScheme: 'system',
+  cookieScheme: 'scheme',
+
+  scopes: {
+    landing: {
+      match: '/',                  // first scope is also the no-match fallback
+      themes: ['sunset', 'ocean'], // optional — omit to inherit the full registry
+      defaultTheme: 'sunset'
+      // cookieTheme omitted → auto-derived 'landing-theme'
+    },
+    admin: {
+      match: '/admin',
+      themes: ['slate', 'graphite'],
+      defaultTheme: 'slate'
+    }
+  }
+});
+```
+
+### Return shape
+
+The scope handles are flat top-level keys, alongside `getActiveScope`:
+
+```ts
+landing.setTheme('ocean');        // typed: 'sunset' | 'ocean'
+admin.setTheme('graphite');       // typed: 'slate' | 'graphite'
+landing.setTheme('graphite');     // TS error — not in landing's subset
+
+getActiveScope();                 // 'landing' | 'admin' — reactive
+```
+
+Each scope key is a full themes handle (`setTheme`, `getThemes`, `getCurrentTheme`, `getDefaultTheme`, `isLoadingTheme`, `getLoadingTheme`) narrowed to that scope's theme subset. Use these when you statically know which scope you're in (e.g. a component that only ever renders under `/admin`).
+
+`getActiveScope` is the only library-provided key in the return — `createScopedThemes` throws if a scope is named `getActiveScope`.
+
+### Smart root functions
+
+The functions exported from the package root — `setTheme`, `getThemes`, `getCurrentTheme`, `getDefaultTheme`, `isLoadingTheme`, `getLoadingTheme` — become **active-scope dispatchers** in a scoped app. They resolve the scope from the current route at call time and delegate:
+
+```svelte
+<!-- src/routes/+layout.svelte — works on every route, no scope hardcoded -->
+<script>
+  import { getThemes, getCurrentTheme, setTheme } from '@plcharriere/svelte-themes';
+</script>
+
+<select onchange={(e) => setTheme(e.currentTarget.value)} value={getCurrentTheme()}>
+  {#each getThemes() as name}
+    <option value={name}>{name}</option>
+  {/each}
+</select>
+```
+
+Under `/admin`, this picker offers `slate` / `graphite` and writes the admin cookie. Under `/`, it offers `sunset` / `ocean` and writes the landing cookie. **The same component**, no `if (route.startsWith('/admin'))` branching.
+
+`getThemes()` returns the **active scope's** theme subset, not the global registry — so a generic picker only ever offers themes appropriate to the route.
+
+Typing trade-off: root functions stay loosely typed (`name: string`) — the active scope isn't known at compile time. For narrow typing, use the destructured scope handle (`admin.setTheme(...)`).
+
+Scheme functions (`setScheme`, `toggleScheme`, `isDark`, `getScheme`, `getDefaultScheme`, `getSchemeSource`, `getThemeSource`) are **global** under the default shared scheme — every call routes to the one shared scheme cookie, no scope dispatch needed. They become scope-aware for any scope with its own scheme (either declared per-scope, or under `sharedScheme: false`), so the call writes that scope's cookie and the change doesn't bleed to other scopes.
+
+### The `match` field
+
+`match` decides which scope a URL belongs to. Evaluated against the runtime `pathname` on every request (server) and every navigation (client).
+
+```ts
+type Matcher = string | readonly string[] | ((url: URL) => boolean);
+```
+
+| Form | Example | Behavior |
+|---|---|---|
+| String | `'/admin'` | Segment-aware prefix — matches `/admin`, `/admin/users/42`, **not** `/administrator`. |
+| Array | `['/admin', '/dashboard']` | Any-of. Puts disjoint route trees in one scope. |
+| Predicate | `(url) => url.pathname.split('/')[2] === 'admin'` | Full control. Use when a dynamic segment is part of the boundary (e.g. i18n prefixes `/en/admin`, `/fr/admin`). |
+
+**Resolution:** longest matching prefix wins among string/array scopes. Predicates are evaluated in declaration order (first match wins). A URL matching nothing falls back to the **first declared scope** — put your primary one first.
+
+`match` works on the resolved runtime path; it doesn't parse SvelteKit route IDs (`[id]`, `[...rest]`). Predicates cover anything prefixes can't.
+
+### Shared vs per-scope scheme
+
+By default, **scheme is shared** — `defaultScheme` and `cookieScheme` live at the top level, every scope uses them, and there is one global light/dark toggle. That's right ~95% of the time (dark mode is a user preference, not a section property).
+
+**One scope independent** — declare its own `defaultScheme` or `cookieScheme`:
+
+```ts
+scopes: {
+  landing: { match: '/', defaultTheme: 'sunset' },
+  marketing: {
+    match: '/marketing',
+    defaultTheme: 'sunset',
+    defaultScheme: 'light'   // marketing always renders light
+  }
+}
+```
+
+`cookieScheme` is auto-derived if you don't name it (next section).
+
+**Every scope independent** — flip the baseline with `sharedScheme: false`:
+
+```ts
+createScopedThemes({
+  themes: { /* ... */ },
+  defaultScheme: 'system',
+  sharedScheme: false,        // default: true
+  scopes: {
+    site:  { match: '/',      defaultTheme: 'bubblegum' },
+    admin: { match: '/admin', defaultTheme: 'claude' }
+  }
+});
+```
+
+Each scope now has its own scheme cookie (`site-scheme`, `admin-scheme`) — toggling dark on `/admin` doesn't touch `/`. Per-scope overrides still win, and scopes inherit the top-level `defaultScheme` as their first-visit fallback.
+
+### Cookie names — auto-derived
+
+Per-scope cookie names default by derivation from the scope name. You only write them to override.
+
+- `cookieTheme` omitted on a scope → `${scopeName}-theme`, e.g. scope `admin` → `admin-theme`.
+- `cookieScheme` omitted on a scope **that has an independent scheme** (declared a scheme field, or under `sharedScheme: false`) → `${scopeName}-scheme`, e.g. `admin-scheme`.
+- Otherwise (the default `sharedScheme: true`, no per-scope scheme field) the scope uses the shared top-level scheme cookie.
+
+```ts
+scopes: {
+  admin: {
+    match: '/admin',
+    defaultTheme: 'slate',
+    cookieTheme: 'panel-theme' // explicit override wins over 'admin-theme'
+  }
+}
+```
+
+The minimal scope config is `{ match, defaultTheme }` (plus `themes` if you want a subset) — cookie names are plumbing the lib fills in.
+
+Isolation comes from **distinct cookie names**, not paths. All cookies use `path=/`; the server reads the matched scope's cookie name. So `setTheme('ocean')` on `/` writes `landing-theme`; `setTheme('graphite')` on `/admin` writes `admin-theme`; coming back to `/` reads `landing-theme` unchanged.
+
+### No-flash cross-scope navigation
+
+When the user SPA-navigates from one scope to another (e.g. `/admin` → `/`), the target scope's theme CSS swaps into the shared `<style id="svelte-themes">` atomically — the same flash-free guarantee as `setTheme`. The CSS is fetched, then `<style>` content and `data-theme` swap together. To make even the *first* cross-scope hop instant, the client speculatively preloads the other scopes' resolved themes on idle after boot — by the time the user navigates, the target CSS is already cached.
+
+### Wiring SvelteKit
+
+Identical to the [flat Quickstart](#3-wire-sveltekit) — same `hooks.server.ts`, same `app.html`, same `import '../themes'` in the root layout. `createThemesHandle()` reads the scope registry and matches each request to the right scope.
+
+For per-scope narrow typing, import the destructured handle from your `themes.ts` in the scope-specific layout:
+
+```svelte
+<!-- src/routes/admin/+layout.svelte -->
+<script>
+  import { admin } from '../../themes';
+  let { children } = $props();
+</script>
+
+<button onclick={() => admin.setTheme('graphite')}>Use graphite</button>
+{@render children()}
+```
+
+For everywhere-else code (a header that lives under any route), use the root smart dispatchers — they auto-dispatch to whichever scope is active.
+
+### Validation
+
+`createScopedThemes` throws at call time on:
+
+- An empty top-level `themes` record.
+- An empty `scopes` object.
+- A scope's `defaultTheme` not in its `themes` subset (or not in the global registry, if `themes` is omitted).
+- A scope referencing a theme key never registered in top-level `themes`.
+- Two scopes sharing a `cookieTheme` or `cookieScheme` name **after derivation** — overlapping names defeat per-scope isolation.
+- Two scopes with identical `match` patterns — ambiguous, specificity can't break the tie.
+- A scope named `getActiveScope` — collides with the reserved helper key.
+- Invalid cookie names (must match `^[A-Za-z0-9_-]+$`).
+
+## Two entry points, two bundles
+
+```ts
+import { createThemes } from '@plcharriere/svelte-themes';        // flat
+import { createScopedThemes } from '@plcharriere/svelte-themes';  // scoped
+```
+
+They live in separate modules and never reference each other, so ES named-export tree-shaking does the right thing: a flat-only app that imports only `createThemes` drops the scoped machinery (~2–4KB) from the bundle automatically; a scoped app drops the flat helpers. Import only what you use.
+
+## TypeScript
+
+The library uses TS 5+ `const` type parameters internally, so you write plain object/array literals — no `as const`, no explicit annotations:
+
+```ts
+const { admin } = createScopedThemes({
+  themes: { slate: ..., graphite: ... },
+  scopes: {
+    admin: {
+      match: '/admin',
+      themes: ['slate', 'graphite'], // captured as a literal tuple automatically
+      defaultTheme: 'slate'
+    }
+  }
+});
+
+admin.setTheme('graphite'); // ✅
+admin.setTheme('sunset');   // ❌ TS error — not in admin's subset
+```
+
+The exported types, for advanced use:
+
+```ts
+import type {
+  Scheme,        // 'light' | 'dark' | 'system'
+  Matcher,       // string | readonly string[] | ((url: URL) => boolean)
+  ThemeLoader,   // () => Promise<string | { default: string }>
+  ThemesConfig,  // flat config
+  ThemesAPI,     // flat handle
+  ScopeDecl,     // one scope's config
+  ScopedConfig,  // scoped config
+  ScopedAPI      // scoped return — per-scope handles + getActiveScope
+} from '@plcharriere/svelte-themes';
+```
+
+## Server entry
+
+```ts
+import { createThemesHandle } from '@plcharriere/svelte-themes/server';
+
+export const handle = createThemesHandle();
+```
+
+Parameterless. Works identically for flat and scoped apps — it reads the registry, matches `event.url.pathname` against the registered scopes (one implicit scope for flat, N scopes for scoped, falling back to the first scope if none match), resolves that scope's theme cookie and the scheme (shared or scope-independent), loads the theme CSS, fills the `%theme-css%` / `%theme%` / `%dark%` placeholders, and injects the boot script. The scopes in your config *are* the route mapping — no route arguments on the handle.
+
 ## Features
 
 - **SSR-safe** — the active theme's CSS is inlined into the HTML on the server. No flash on reload.
 - **Cookie-persisted** — the choice survives reloads and works across server and client without `localStorage` hacks.
 - **Respects `prefers-color-scheme`** — when the user is in system mode (default, or `setScheme('system')`), the library reads the `Sec-CH-Prefers-Color-Scheme` client hint server-side, falls back to a tiny boot script, and listens for live OS changes while the page is open. Set `defaultScheme: 'light'` or `'dark'` to ignore the OS preference for first-time visitors; users can still opt into system at any point via `setScheme('system')`.
-- **Cross-tab sync** — switching theme or scheme in one tab updates every other open tab live via `BroadcastChannel`. Toggleable.
-- **Reactive reads** — `getCurrentTheme()`, `getThemeSource()`, `isDark()`, `getScheme()`, `getSchemeSource()`, `isLoadingTheme()`, and `getLoadingTheme()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, and in-flight theme loads all flow into your components with no manual subscription.
+- **Cross-tab sync** — switching theme or scheme in one tab updates every other open tab live via `BroadcastChannel`. Scope-tagged so an admin-theme change can't leak into a landing tab. Toggleable.
+- **Reactive reads** — `getCurrentTheme()`, `getThemeSource()`, `isDark()`, `getScheme()`, `getSchemeSource()`, `isLoadingTheme()`, `getLoadingTheme()`, and `getActiveScope()` are backed by Svelte 5 runes. Read them in a template, `$derived`, or `$effect` and your UI tracks the value automatically — cross-tab updates, OS preference changes, route changes, and in-flight theme loads all flow into your components with no manual subscription.
 - **Lazy-loaded** — each theme is a dynamic import. The server only loads the active theme; the client only fetches a theme on first switch, then caches it.
+- **Scoped (opt-in)** — per-section themes with automatic active-scope dispatch and flash-free cross-scope navigation.
 - **Plain CSS** — themes are CSS files. Bring your own variables, your own Tailwind setup, your own conventions.
 - **Independent scheme toggle** — `dark` is a class on `<html>`, orthogonal to the theme name. Combine freely.
 
-## API
+## API reference
 
 ### Setup
 
 | Export | Purpose |
 | --- | --- |
-| `createThemes(config)` | Register themes, default theme, default scheme. |
-| `createThemesHandle()` | Server entry (`@plcharriere/svelte-themes/server`). |
+| `createThemes(config)` | Register a flat themes system → flat handle. |
+| `createScopedThemes(config)` | Register a scoped themes system → per-scope handles + `getActiveScope`. |
+| `createThemesHandle()` | Server entry (`@plcharriere/svelte-themes/server`), works for both. |
 
-### Theme
+### Theme (flat handle / per-scope handle)
 
 | Export | Purpose |
 | --- | --- |
 | `setTheme(name, scheme?)` | Switch theme, optionally also set scheme. Async. |
-| `getThemes()` | All registered theme names. |
+| `getThemes()` | All theme names registered in this scope (or all themes, in flat mode). |
 | `getCurrentTheme()` | Active theme name. |
 | `getDefaultTheme()` | Configured default theme name. |
-| `getThemeSource()` | `'cookie'` (user picked) / `'default'` (config fallback). |
+| `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to ask about a single theme. |
+| `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
 
-### Scheme
+### Theme (package root — smart dispatchers in scoped apps)
+
+| Export | Purpose |
+| --- | --- |
+| `setTheme`, `getThemes`, `getCurrentTheme`, `getDefaultTheme`, `isLoadingTheme`, `getLoadingTheme` | Same shape as the handle functions, loosely typed (`name: string`). In a scoped app, dispatch to the active scope. In a flat app, identical to the handle. |
+| `getThemeSource()` | `'cookie'` (user picked) / `'default'` (config fallback). Lives only on the root. |
+
+### Scheme (package root)
 
 | Export | Purpose |
 | --- | --- |
@@ -271,14 +555,15 @@ Both functions also fire when **another tab** broadcasts a theme change and this
 | `getSchemeSource()` | `'cookie'` (user picked) / `'default'` (config fallback). |
 | `isDark()` | Resolved dark state — always boolean. |
 
-### Loading
+Under the default shared scheme, all six route to one global scheme cookie. For independent-scheme scopes (declared per-scope, or under `sharedScheme: false`), they dispatch to the active route's scope so the change only affects that scope.
+
+### Scoped-only
 
 | Export | Purpose |
 | --- | --- |
-| `isLoadingTheme(name?)` | `true` while a theme chunk is in-flight. Pass a name to scope. |
-| `getLoadingTheme()` | Name of the theme currently loading, or `null`. |
+| `getActiveScope()` | Name of the scope active on the current route. Reactive. |
 
-## Config options
+## Config options — flat
 
 ```ts
 createThemes({
@@ -305,16 +590,42 @@ createThemes({
 
 `syncTabs` enables live cross-tab updates via `BroadcastChannel` — when one tab calls `setTheme`, `setScheme`, or `toggleScheme`, every other open tab applies the change immediately. Set to `false` to disable. `syncChannel` only matters if you have multiple apps on the same origin (e.g. `/app1` and `/app2`) and want to keep them isolated; otherwise the default is fine.
 
+## Config options — scoped
+
+```ts
+createScopedThemes({
+  themes: {
+    name: () => import('./path-to-theme.css?inline')
+  },
+  defaultScheme: 'system',      // optional — shared scheme default
+  cookieScheme: 'scheme',       // optional — shared scheme cookie name
+  sharedScheme: true,           // optional — false = every scope independent
+  syncTabs: true,               // optional
+  syncChannel: 'svelte-themes', // optional
+  scopes: {
+    scopeName: {
+      match: '/path',           // string | string[] | (url: URL) => boolean
+      themes: ['a', 'b'],       // optional — defaults to all registered themes
+      defaultTheme: 'a',        // required — must be in this scope's themes
+      cookieTheme: 'a-theme',   // optional — defaults to '${scopeName}-theme'
+      defaultScheme: 'light',   // optional — declaring opts into an independent scheme
+      cookieScheme: 'a-scheme'  // optional — defaults to '${scopeName}-scheme' if independent
+    }
+  }
+});
+```
+
 ## How it works
 
-For each request the handle decides on a theme + scheme by reading the `theme` and `scheme` cookies (configurable names):
+For each request the handle picks a scope (the implicit single scope, in flat mode), then decides theme + scheme by reading that scope's cookies:
 
-1. **Theme cookie** — if set and known, use it. Otherwise fall back to `defaultTheme`.
-2. **Scheme cookie** — has three valid values:
+1. **Active scope** — match `event.url.pathname` against the registered scopes; longest matching string-prefix wins, otherwise first declared scope.
+2. **Theme cookie** — if set and known, use it. Otherwise fall back to the scope's `defaultTheme`.
+3. **Scheme cookie** — has three valid values:
    - `'dark'` → force dark
    - `'light'` → force light
    - `'system'` → follow OS prefs (read `Sec-CH-Prefers-Color-Scheme` request header)
-3. **No scheme cookie** — fall back to `defaultScheme`:
+4. **No scheme cookie** — fall back to `defaultScheme`:
    - `'system'` → follow OS prefs (same as cookie `'system'`)
    - `'light'` / `'dark'` → use that
 
@@ -322,9 +633,9 @@ The handle loads the matching theme CSS lazily, inlines it into `%theme-css%`, s
 
 A tiny boot script is auto-injected by the handle right before `</head>`. It runs synchronously before paint, and toggles the `dark` class from `matchMedia('(prefers-color-scheme: dark)')` when the user is in system mode (cookie `'system'` or no cookie + `defaultScheme: 'system'`) — covers first-ever visits and browsers that don't send the client hint. The configured `cookieScheme` name is baked into the script per request. A `matchMedia` listener on the client keeps the class updated if the OS preference changes mid-session.
 
-On the client, `setTheme(name)` writes the theme cookie. `setScheme('light' | 'dark' | 'system')` writes `scheme=light`, `scheme=dark`, or `scheme=system`. All persist across reloads — the server reads the cookie next request and renders the matching state.
+On the client, `setTheme(name)` writes the scope's theme cookie. `setScheme('light' | 'dark' | 'system')` writes the scheme cookie (shared or scope-independent). All persist across reloads — the server reads the cookie next request and renders the matching state.
 
-When `syncTabs` is enabled (the default), each `setTheme` / `setScheme` / `toggleScheme` also posts a message on a `BroadcastChannel`. Other tabs of the same origin receive the message, validate it, and apply the change locally — without re-broadcasting or re-writing cookies, so there's no echo. `BroadcastChannel` is already same-origin scoped, so messages can't cross between sites.
+When `syncTabs` is enabled (the default), each `setTheme` / `setScheme` / `toggleScheme` also posts a message on a `BroadcastChannel`. Other tabs of the same origin receive the message, validate it, and apply the change locally — without re-broadcasting or re-writing cookies, so there's no echo. Theme messages are tagged with the scope name so a change in `admin` doesn't leak into a `landing` tab. `BroadcastChannel` is already same-origin scoped, so messages can't cross between sites.
 
 ## License
 

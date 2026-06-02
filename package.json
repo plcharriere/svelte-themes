@@ -1,6 +1,6 @@
 {
 	"name": "@plcharriere/svelte-themes",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"description": "SSR-safe theme switching for SvelteKit 2 + Svelte 5. Plain CSS themes, cookie-persisted, prefers-color-scheme aware, with live cross-tab sync.",
 	"keywords": [
 		"svelte",
@@ -14,8 +14,8 @@
 		"typescript"
 	],
 	"license": "MIT",
-	"author": "Paul-Louis Charriere",
-	"homepage": "https://github.com/plcharriere/svelte-themes#readme",
+	"author": "Paul-Louis Charrière",
+	"homepage": "https://github.com/plcharriere/svelte-themes",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/plcharriere/svelte-themes.git"
@@ -55,7 +55,9 @@
 		"package": "svelte-kit sync && svelte-package && publint",
 		"prepublishOnly": "pnpm run package",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"peerDependencies": {
 		"@sveltejs/kit": "^2.0.0",
@@ -63,17 +65,19 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-cloudflare": "^7.2.8",
-		"@sveltejs/kit": "^2.57.0",
+		"@sveltejs/kit": "^2.59.0",
 		"@sveltejs/package": "^2.5.7",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@tailwindcss/vite": "^4.2.4",
 		"@types/node": "^25.6.0",
+		"@vitest/coverage-v8": "^4.1.6",
 		"publint": "^0.3.18",
-		"svelte": "^5.55.2",
-		"svelte-check": "^4.4.6",
+		"svelte": "^5.55.7",
+		"svelte-check": "^4.4.7",
 		"tailwindcss": "^4.2.4",
-		"typescript": "^6.0.2",
-		"vite": "^8.0.7",
-		"wrangler": "^4.86.0"
+		"typescript": "^6.0.3",
+		"vite": "^8.0.10",
+		"vitest": "^4.1.6",
+		"wrangler": "^4.87.0"
 	}
 }

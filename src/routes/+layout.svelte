@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { getThemes, getCurrentTheme, setTheme, isLoadingTheme } from '../themes';
 	import { setScheme, toggleScheme } from '$lib';
 
@@ -38,7 +39,7 @@
 		withTransition(
 			() => {
 				setTheme(name);
-				if (page.url.pathname !== '/') goto('/');
+				if (page.url.pathname !== '/') goto(resolve('/'));
 			},
 			{ x: e.clientX, y: e.clientY }
 		);
@@ -106,7 +107,7 @@
 		<div class="flex flex-col gap-2 flex-1 min-h-0">
 			<p class="text-muted-foreground text-xs uppercase tracking-wider">Themes</p>
 			<div class="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-3 pr-3">
-				{#each themes as name}
+				{#each themes as name (name)}
 					{@const active = page.url.pathname === '/' && getCurrentTheme() === name}
 					{@const loading = isLoadingTheme(name)}
 					<button

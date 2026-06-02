@@ -1,17 +1,21 @@
 import { setConfig } from './config.js';
 import {
-	getCurrentTheme,
-	getDefaultTheme,
-	getLoadingTheme,
-	getThemes,
-	initClient,
-	isLoadingTheme,
-	setTheme
-} from './theme.svelte.js';
-import type { ThemeLoader, ThemesAPI, ThemesConfig } from './types.js';
+	clearRegistry,
+	registerScope,
+	ThemeScope,
+	type ThemeScopeConfig
+} from './core.svelte.js';
+import type { Scheme, ThemeLoader, ThemesAPI, ThemesConfig } from './types.js';
 
 const COOKIE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
+const FLAT_SCOPE_NAME = 'default';
+
+/**
+ * Register a single flat themes system. For per-section theming use
+ * `createScopedThemes` from `@plcharriere/svelte-themes` instead — it has its
+ * own entry point so the scoped machinery tree-shakes out of flat-only bundles.
+ */
 export function createThemes<T extends Record<string, ThemeLoader>>(
 	options: ThemesConfig<T>
 ): ThemesAPI<T> {
@@ -35,23 +39,49 @@ export function createThemes<T extends Record<string, ThemeLoader>>(
 			`createThemes: cookieScheme "${cookieScheme}" must match ${COOKIE_NAME_RE}`
 		);
 	}
+
+	const defaultScheme: Scheme = options.defaultScheme ?? 'system';
+	const syncTabs = options.syncTabs ?? true;
+	const syncChannel = options.syncChannel ?? 'svelte-themes';
+
+	// Tear down any prior scope (and its DOM/BC listeners) before swapping the
+	// singleton config. Matches `createScopedThemes`'s order.
+	clearRegistry();
+
 	setConfig({
 		themes: options.themes,
 		defaultTheme,
-		defaultScheme: options.defaultScheme ?? 'system',
+		defaultScheme,
 		cookieTheme,
 		cookieScheme,
-		syncTabs: options.syncTabs ?? true,
-		syncChannel: options.syncChannel ?? 'svelte-themes'
+		syncTabs,
+		syncChannel
 	});
-	initClient();
+
+	const scopeConfig: ThemeScopeConfig = {
+		name: FLAT_SCOPE_NAME,
+		themes: options.themes,
+		defaultTheme,
+		defaultScheme,
+		cookieTheme,
+		cookieScheme,
+		// Flat mode owns its scheme outright — there's only one scope and no
+		// shared top-level scheme cookie above it.
+		independentScheme: true,
+		syncTabs,
+		syncChannel
+	};
+
+	const scope = new ThemeScope(scopeConfig);
+	registerScope(scope);
+	scope.initClient();
 
 	return {
-		setTheme,
-		getThemes,
-		getCurrentTheme,
-		getDefaultTheme,
-		isLoadingTheme,
-		getLoadingTheme
-	} as ThemesAPI<T>;
+		setTheme: (name, scheme) => scope.setTheme(name, scheme),
+		getThemes: () => scope.getThemes() as (keyof T & string)[],
+		getCurrentTheme: () => scope.getCurrentTheme() as keyof T & string,
+		getDefaultTheme: () => scope.getDefaultTheme() as keyof T & string,
+		isLoadingTheme: (name) => scope.isLoadingTheme(name),
+		getLoadingTheme: () => scope.getLoadingTheme() as (keyof T & string) | null
+	};
 }

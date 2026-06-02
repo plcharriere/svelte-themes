@@ -1,6 +1,7 @@
 import type { Scheme } from './types.js';
 
-type RequestState = {
+export type RequestState = {
+	scopeName: string;
 	theme: string;
 	themeSource: 'cookie' | 'default';
 	dark: boolean;

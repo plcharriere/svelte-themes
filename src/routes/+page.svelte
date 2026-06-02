@@ -81,7 +81,7 @@
 	<section class="space-y-3">
 		<h2 class="font-serif text-2xl font-semibold">Color palette</h2>
 		<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-			{#each ['background', 'foreground', 'card', 'popover', 'primary', 'secondary', 'muted', 'accent', 'destructive', 'border', 'input', 'ring'] as token}
+			{#each ['background', 'foreground', 'card', 'popover', 'primary', 'secondary', 'muted', 'accent', 'destructive', 'border', 'input', 'ring'] as token (token)}
 				<div class="rounded-md border border-border overflow-hidden shadow-xs">
 					<div class="h-16 w-full" style="background-color: var(--{token});"></div>
 					<div class="bg-card text-card-foreground px-3 py-2">
@@ -104,7 +104,7 @@
 	<section class="space-y-3">
 		<h2 class="font-serif text-2xl font-semibold">Shadows</h2>
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-			{#each ['shadow-xs', 'shadow-sm', 'shadow', 'shadow-md', 'shadow-lg', 'shadow-xl', 'shadow-2xl'] as s}
+			{#each ['shadow-xs', 'shadow-sm', 'shadow', 'shadow-md', 'shadow-lg', 'shadow-xl', 'shadow-2xl'] as s (s)}
 				<div class="bg-card text-card-foreground rounded-md border border-border p-4 {s}">
 					<div class="font-mono text-xs">{s}</div>
 				</div>
@@ -115,7 +115,7 @@
 	<section class="space-y-3">
 		<h2 class="font-serif text-2xl font-semibold">Radius</h2>
 		<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-			{#each ['rounded-sm', 'rounded-md', 'rounded-lg', 'rounded-xl'] as r}
+			{#each ['rounded-sm', 'rounded-md', 'rounded-lg', 'rounded-xl'] as r (r)}
 				<div
 					class="bg-card text-card-foreground border border-border p-6 flex items-center justify-center {r}"
 				>

@@ -1,4 +1,5 @@
 export { createThemes } from './create.js';
+export { createScopedThemes } from './scoped.js';
 export {
 	getThemes,
 	getCurrentTheme,
@@ -13,5 +14,14 @@ export {
 	toggleScheme,
 	isLoadingTheme,
 	getLoadingTheme
-} from './theme.svelte.js';
-export type { ThemesConfig, ThemesAPI, ThemeLoader, Scheme } from './types.js';
+} from './dispatchers.js';
+export type {
+	ThemesConfig,
+	ThemesAPI,
+	ThemeLoader,
+	Scheme,
+	Matcher,
+	ScopeDecl,
+	ScopedConfig,
+	ScopedAPI
+} from './types.js';
