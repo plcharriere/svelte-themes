@@ -1,37 +1,31 @@
-import type { ResolvedThemesConfig } from './types.js';
+import type { ThemeLoader } from './types.js';
 
-let config: ResolvedThemesConfig | null = null;
+// Cache CSS by an opaque key (scope/axis/name) so scope-local theme names that
+// happen to collide across scopes don't cross-serve. The loader is passed in by
+// the caller (each axis owns its loaders) — no global config singleton.
 const cache = new Map<string, Promise<string>>();
 
-export function setConfig(c: ResolvedThemesConfig): void {
-	config = c;
-	cache.clear();
-}
-
-export function getConfig(): ResolvedThemesConfig {
-	if (!config) {
-		throw new Error('svelte-themes: createThemes() was not called');
-	}
-	return config;
-}
-
-export function loadCss(name: string): Promise<string> {
-	let promise = cache.get(name);
+export function loadCss(key: string, loader: ThemeLoader): Promise<string> {
+	let promise = cache.get(key);
 	if (!promise) {
-		const cfg = getConfig();
-		promise = cfg.themes[name]()
+		promise = loader()
 			.then((mod) => {
 				const css = typeof mod === 'string' ? mod : mod.default;
 				if (typeof css !== 'string') {
-					throw new Error(`Theme "${name}" did not export a CSS string`);
+					throw new Error(`svelte-themes: loader for "${key}" did not return a CSS string`);
 				}
 				return css;
 			})
 			.catch((err) => {
-				cache.delete(name);
+				cache.delete(key);
 				throw err;
 			});
-		cache.set(name, promise);
+		cache.set(key, promise);
 	}
 	return promise;
+}
+
+/** Test helper — clear the CSS cache between runs. */
+export function clearCssCache(): void {
+	cache.clear();
 }

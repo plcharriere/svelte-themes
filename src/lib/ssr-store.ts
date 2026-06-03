@@ -1,9 +1,12 @@
 import type { Scheme } from './types.js';
 
+export type AxisResolution = { name: string; source: 'cookie' | 'default' };
+
 export type RequestState = {
 	scopeName: string;
-	theme: string;
-	themeSource: 'cookie' | 'default';
+	// per-axis theme resolution for the active scope. Flat scope has a single
+	// entry keyed by the implicit axis name ('default').
+	themes: Record<string, AxisResolution>;
 	dark: boolean;
 	scheme: Scheme;
 	schemeSource: 'cookie' | 'default';

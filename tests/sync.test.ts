@@ -8,44 +8,39 @@ import {
 } from '../src/lib/core.svelte.js';
 
 // ---------------------------------------------------------------------------
-// buildSyncMessage — broadcast shape
+// buildSyncMessage — theme (carries the axis tag)
 // ---------------------------------------------------------------------------
 
 describe('buildSyncMessage — theme', () => {
-	it('tags with the broadcaster scope name (independent)', () => {
-		const msg = buildSyncMessage('theme', 'admin', true, { name: 'graphite' });
-		expect(msg).toEqual({ kind: 'theme', scope: 'admin', name: 'graphite' });
+	it('tags with the broadcaster scope name + axis + theme name (independent scheme)', () => {
+		const msg = buildSyncMessage('theme', 'admin', true, { axis: 'density', name: 'compact' });
+		expect(msg).toEqual({ kind: 'theme', scope: 'admin', axis: 'density', name: 'compact' });
 	});
 
-	it('tags with the broadcaster scope name (shared-scheme scope)', () => {
-		// Theme tagging never uses the @shared sentinel — only scheme does.
-		const msg = buildSyncMessage('theme', 'landing', false, { name: 'ocean' });
-		expect(msg).toEqual({ kind: 'theme', scope: 'landing', name: 'ocean' });
+	it('theme tagging never uses @shared — independentScheme does not affect it', () => {
+		const msg = buildSyncMessage('theme', 'landing', false, { axis: 'colors', name: 'ocean' });
+		expect(msg).toEqual({ kind: 'theme', scope: 'landing', axis: 'colors', name: 'ocean' });
 	});
 });
 
+// ---------------------------------------------------------------------------
+// buildSyncMessage — scheme (scope name when independent, @shared when shared)
+// ---------------------------------------------------------------------------
+
 describe('buildSyncMessage — scheme', () => {
-	it('uses the scope name when the broadcaster owns its scheme', () => {
+	it('uses the scope name when the broadcaster owns its scheme (independent)', () => {
 		const msg = buildSyncMessage('scheme', 'admin', true, { scheme: 'dark' });
 		expect(msg).toEqual({ kind: 'scheme', scope: 'admin', scheme: 'dark' });
 	});
 
-	it('uses the @shared sentinel when the broadcaster shares the top-level scheme', () => {
+	it('uses the @shared sentinel when scheme is shared', () => {
 		const msg = buildSyncMessage('scheme', 'landing', false, { scheme: 'light' });
-		expect(msg).toEqual({
-			kind: 'scheme',
-			scope: SHARED_SCHEME_SCOPE,
-			scheme: 'light'
-		});
+		expect(msg).toEqual({ kind: 'scheme', scope: SHARED_SCHEME_SCOPE, scheme: 'light' });
 	});
 
 	it('routes the system scheme through @shared too', () => {
 		const msg = buildSyncMessage('scheme', 'landing', false, { scheme: 'system' });
-		expect(msg).toEqual({
-			kind: 'scheme',
-			scope: SHARED_SCHEME_SCOPE,
-			scheme: 'system'
-		});
+		expect(msg).toEqual({ kind: 'scheme', scope: SHARED_SCHEME_SCOPE, scheme: 'system' });
 	});
 });
 
@@ -59,14 +54,14 @@ const sharedLanding = { name: 'landing', independentScheme: false };
 const sharedAdmin = { name: 'admin', independentScheme: false };
 
 describe('shouldHandleSyncMessage — theme messages', () => {
-	it('acts only when scope tag matches the receiver name', () => {
-		const own: SyncMessage = { kind: 'theme', scope: 'landing', name: 'ocean' };
+	it('acts only when the scope tag matches the receiver name', () => {
+		const own: SyncMessage = { kind: 'theme', scope: 'landing', axis: 'colors', name: 'ocean' };
 		expect(shouldHandleSyncMessage(independentLanding, own)).toBe(true);
 		expect(shouldHandleSyncMessage(sharedLanding, own)).toBe(true);
 	});
 
 	it('ignores theme messages from a different scope', () => {
-		const foreign: SyncMessage = { kind: 'theme', scope: 'admin', name: 'graphite' };
+		const foreign: SyncMessage = { kind: 'theme', scope: 'admin', axis: 'density', name: 'compact' };
 		expect(shouldHandleSyncMessage(independentLanding, foreign)).toBe(false);
 		expect(shouldHandleSyncMessage(sharedLanding, foreign)).toBe(false);
 	});
@@ -75,6 +70,7 @@ describe('shouldHandleSyncMessage — theme messages', () => {
 		const sharedTag: SyncMessage = {
 			kind: 'theme',
 			scope: SHARED_SCHEME_SCOPE,
+			axis: 'colors',
 			name: 'ocean'
 		};
 		expect(shouldHandleSyncMessage(independentLanding, sharedTag)).toBe(false);
@@ -82,71 +78,46 @@ describe('shouldHandleSyncMessage — theme messages', () => {
 	});
 });
 
-describe('shouldHandleSyncMessage — scheme messages + independent receiver', () => {
-	it('acts only when scope tag matches the receiver name', () => {
+describe('shouldHandleSyncMessage — scheme + independent receiver', () => {
+	it('acts only when the scope tag matches the receiver name', () => {
 		const own: SyncMessage = { kind: 'scheme', scope: 'admin', scheme: 'dark' };
 		expect(shouldHandleSyncMessage(independentAdmin, own)).toBe(true);
 	});
 
 	it('ignores scheme messages from a different independent scope', () => {
-		const foreign: SyncMessage = {
-			kind: 'scheme',
-			scope: 'landing',
-			scheme: 'light'
-		};
+		const foreign: SyncMessage = { kind: 'scheme', scope: 'landing', scheme: 'light' };
 		expect(shouldHandleSyncMessage(independentAdmin, foreign)).toBe(false);
 	});
 
-	it('ignores shared-scheme broadcasts when the receiver is independent', () => {
-		const shared: SyncMessage = {
-			kind: 'scheme',
-			scope: SHARED_SCHEME_SCOPE,
-			scheme: 'dark'
-		};
+	it('ignores @shared scheme broadcasts when the receiver is independent', () => {
+		const shared: SyncMessage = { kind: 'scheme', scope: SHARED_SCHEME_SCOPE, scheme: 'dark' };
 		expect(shouldHandleSyncMessage(independentAdmin, shared)).toBe(false);
 	});
 });
 
-describe('shouldHandleSyncMessage — scheme messages + shared receiver', () => {
+describe('shouldHandleSyncMessage — scheme + shared receiver', () => {
 	it('acts only on @shared scheme broadcasts', () => {
-		const shared: SyncMessage = {
-			kind: 'scheme',
-			scope: SHARED_SCHEME_SCOPE,
-			scheme: 'dark'
-		};
+		const shared: SyncMessage = { kind: 'scheme', scope: SHARED_SCHEME_SCOPE, scheme: 'dark' };
 		expect(shouldHandleSyncMessage(sharedLanding, shared)).toBe(true);
 		expect(shouldHandleSyncMessage(sharedAdmin, shared)).toBe(true);
 	});
 
 	it('ignores scheme messages tagged with a real scope name', () => {
-		const fromIndependent: SyncMessage = {
-			kind: 'scheme',
-			scope: 'admin',
-			scheme: 'dark'
-		};
-		expect(shouldHandleSyncMessage(sharedLanding, fromIndependent)).toBe(false);
-
-		const selfTag: SyncMessage = {
-			kind: 'scheme',
-			scope: 'landing',
-			scheme: 'dark'
-		};
+		const tagged: SyncMessage = { kind: 'scheme', scope: 'admin', scheme: 'dark' };
+		const selfTag: SyncMessage = { kind: 'scheme', scope: 'landing', scheme: 'dark' };
+		expect(shouldHandleSyncMessage(sharedLanding, tagged)).toBe(false);
 		expect(shouldHandleSyncMessage(sharedLanding, selfTag)).toBe(false);
 	});
 });
 
 describe('shouldHandleSyncMessage — round-trip with buildSyncMessage', () => {
 	it('two shared-scheme scopes hear each other’s scheme changes', () => {
-		const broadcast = buildSyncMessage('scheme', 'landing', false, {
-			scheme: 'dark'
-		});
+		const broadcast = buildSyncMessage('scheme', 'landing', false, { scheme: 'dark' });
 		expect(shouldHandleSyncMessage(sharedAdmin, broadcast)).toBe(true);
 	});
 
 	it('an independent scope is isolated from a shared scope’s scheme change', () => {
-		const broadcast = buildSyncMessage('scheme', 'landing', false, {
-			scheme: 'dark'
-		});
+		const broadcast = buildSyncMessage('scheme', 'landing', false, { scheme: 'dark' });
 		expect(shouldHandleSyncMessage(independentAdmin, broadcast)).toBe(false);
 	});
 
@@ -159,10 +130,12 @@ describe('shouldHandleSyncMessage — round-trip with buildSyncMessage', () => {
 
 	it('theme broadcasts never leak across scopes', () => {
 		const landingTheme = buildSyncMessage('theme', 'landing', false, {
+			axis: 'colors',
 			name: 'ocean'
 		});
 		const adminTheme = buildSyncMessage('theme', 'admin', true, {
-			name: 'graphite'
+			axis: 'density',
+			name: 'compact'
 		});
 		expect(shouldHandleSyncMessage(sharedAdmin, landingTheme)).toBe(false);
 		expect(shouldHandleSyncMessage(independentLanding, adminTheme)).toBe(false);

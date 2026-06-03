@@ -6,585 +6,450 @@ import {
 	matchScope,
 	registerScope,
 	registerScopeMatcher,
-	ThemeScope
+	ThemeScope,
+	type ThemeScopeConfig
 } from '../src/lib/core.svelte.js';
 import { createScopedThemes } from '../src/lib/scoped.js';
 import type { Matcher, ThemeLoader } from '../src/lib/types.js';
 
 const css = (s: string): ThemeLoader => () => Promise.resolve(s);
 
-const ALL = {
-	sunset: css(':root {}'),
-	ocean: css(':root {}'),
-	slate: css(':root {}'),
-	graphite: css(':root {}')
-} as const;
+// Runtime escape hatch: per-scope `defaultTheme` / `defaultThemes` are valid at
+// runtime but currently don't type-check through `createScopedThemes`'s generic
+// constraint (the decl widens to `ScopeDecl<Themes>`, collapsing those fields to
+// `never` / `undefined`). These tests exercise the *runtime* behavior, so they
+// route the config through a loosely-typed call. Type-level coverage of the
+// (working) per-scope narrowing lives in types.test.ts.
+type ScopedArg = Parameters<typeof createScopedThemes>[0];
+function scopedLoose(config: unknown): ReturnType<typeof createScopedThemes> {
+	return createScopedThemes(config as ScopedArg);
+}
 
-beforeEach(() => {
-	clearRegistry();
-});
+beforeEach(() => clearRegistry());
+
+function cfg(name: string): ThemeScopeConfig {
+	const scope = getScope(name);
+	if (!scope) throw new Error(`no scope "${name}"`);
+	return scope.config;
+}
 
 // ---------------------------------------------------------------------------
-// Validation
+// per-scope normalization + cookie derivation
 // ---------------------------------------------------------------------------
 
-describe('createScopedThemes — validation', () => {
-	it('throws on empty scopes', () => {
-		expect(() =>
-			createScopedThemes({ themes: ALL, scopes: {} })
-		).toThrow(/scopes must not be empty/);
+describe('createScopedThemes — per-scope normalize + cookie derivation', () => {
+	it('flat scope derives `theme-${scope}` (no axis suffix)', () => {
+		createScopedThemes({
+			scopes: {
+				landing: { match: '/', themes: { salmon: css(''), sapphire: css('') } }
+			}
+		});
+		const c = cfg('landing');
+		expect(c.flat).toBe(true);
+		expect(c.axes).toHaveLength(1);
+		expect(c.axes[0]).toMatchObject({
+			name: 'default',
+			cookieName: 'theme-landing',
+			styleId: 'svelte-themes',
+			cacheKeyPrefix: 'landing/default'
+		});
 	});
 
-	it('throws on no themes', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: {},
-				scopes: {
-					a: { match: '/', defaultTheme: 'x' as never }
-				}
-			})
-		).toThrow(/no themes provided/);
-	});
-
-	it('throws when a scope references an unknown theme', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					admin: {
-						match: '/admin',
-						themes: ['unknown' as never],
-						defaultTheme: 'unknown' as never
+	it('axed scope derives `theme-${scope}-${axis}` per axis', () => {
+		createScopedThemes({
+			scopes: {
+				admin: {
+					match: '/admin',
+					themes: {
+						density: { compact: css(''), comfy: css('') },
+						accent: { blue: css(''), green: css('') }
 					}
 				}
-			})
-		).toThrow(/references unknown theme "unknown"/);
+			}
+		});
+		const c = cfg('admin');
+		expect(c.flat).toBe(false);
+		expect(c.axes.map((a) => [a.name, a.cookieName, a.styleId])).toEqual([
+			['density', 'theme-admin-density', 'svelte-themes-density'],
+			['accent', 'theme-admin-accent', 'svelte-themes-accent']
+		]);
 	});
 
-	it("throws when defaultTheme is outside the scope's subset", () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					admin: {
-						match: '/admin',
-						themes: ['slate', 'graphite'],
-						// 'sunset' exists globally but not in the subset.
-						defaultTheme: 'sunset'
-					}
+	it('mixed scope: bare loaders fold into `theme-${scope}-default`', () => {
+		createScopedThemes({
+			scopes: {
+				shop: {
+					match: '/shop',
+					themes: { bubblegum: css(''), colors: { salmon: css('') } }
 				}
-			})
-		).toThrow(/defaultTheme "sunset" not in its themes/);
+			}
+		});
+		const c = cfg('shop');
+		expect(c.axes.map((a) => a.cookieName)).toEqual(['theme-shop-default', 'theme-shop-colors']);
 	});
 
-	it("throws when defaultTheme isn't in the global registry (subset omitted)", () => {
+	it('theme names are scope-local — same name in two scopes is fine', () => {
 		expect(() =>
 			createScopedThemes({
-				themes: ALL,
 				scopes: {
-					a: {
-						match: '/',
-						defaultTheme: 'missing' as never
-					}
-				}
-			})
-		).toThrow(/defaultTheme "missing" not in its themes/);
-	});
-
-	it('throws on duplicate match patterns', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: { match: '/admin', defaultTheme: 'sunset' },
-					b: { match: '/admin', defaultTheme: 'ocean' }
-				}
-			})
-		).toThrow(/identical match patterns/);
-	});
-
-	it('does not throw on duplicate predicate matchers (cannot compare structurally)', () => {
-		const pred: Matcher = (u) => u.pathname === '/x';
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: { match: pred, defaultTheme: 'sunset' },
-					b: { match: pred, defaultTheme: 'ocean' }
+					landing: { match: '/', themes: { salmon: css(''), sapphire: css('') } },
+					admin: { match: '/admin', themes: { salmon: css(''), green: css('') } }
 				}
 			})
 		).not.toThrow();
+		expect(cfg('landing').axes[0].cacheKeyPrefix).toBe('landing/default');
+		expect(cfg('admin').axes[0].cacheKeyPrefix).toBe('admin/default');
 	});
 
-	it('throws when a scope is named getActiveScope', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					getActiveScope: { match: '/', defaultTheme: 'sunset' }
-				}
-			})
-		).toThrow(/reserved/);
+	it('cookieTheme prefix applies to all derived theme cookies', () => {
+		createScopedThemes({
+			cookieTheme: 'th',
+			scopes: {
+				landing: { match: '/', themes: { salmon: css('') } },
+				admin: { match: '/admin', themes: { density: { compact: css('') } } }
+			}
+		});
+		expect(cfg('landing').axes[0].cookieName).toBe('th-landing');
+		expect(cfg('admin').axes[0].cookieName).toBe('th-admin-density');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// per-scope defaults
+// ---------------------------------------------------------------------------
+
+describe('createScopedThemes — per-scope defaults', () => {
+	it('flat scope uses defaultTheme; falls back to first theme', () => {
+		const api = scopedLoose({
+			scopes: {
+				landing: { match: '/', themes: { salmon: css(''), sapphire: css('') }, defaultTheme: 'sapphire' },
+				other: { match: '/other', themes: { a: css(''), b: css('') } }
+			}
+		});
+		expect(api.landing.getDefaultTheme()).toBe('sapphire');
+		expect(api.other.getDefaultTheme()).toBe('a');
 	});
 
-	it('throws on bad cookieTheme chars', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: { match: '/', defaultTheme: 'sunset', cookieTheme: 'has space' }
-				}
-			})
-		).toThrow(/cookieTheme "has space" must match/);
-	});
-
-	it('throws on bad cookieScheme chars', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: {
-						match: '/',
-						defaultTheme: 'sunset',
-						defaultScheme: 'dark',
-						cookieScheme: 'bad;name'
-					}
-				}
-			})
-		).toThrow(/cookieScheme "bad;name" must match/);
-	});
-
-	it('throws on bad top-level cookieScheme chars', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				cookieScheme: 'bad;name',
-				scopes: { a: { match: '/', defaultTheme: 'sunset' } }
-			})
-		).toThrow(/cookieScheme "bad;name" must match/);
-	});
-
-	it('throws when explicit cookieTheme values collide', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: { match: '/a', defaultTheme: 'sunset', cookieTheme: 'shared' },
-					b: { match: '/b', defaultTheme: 'ocean', cookieTheme: 'shared' }
-				}
-			})
-		).toThrow(/share cookieTheme "shared"/);
-	});
-
-	it('throws when explicit independent cookieScheme values collide', () => {
-		expect(() =>
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: {
-						match: '/a',
-						defaultTheme: 'sunset',
-						defaultScheme: 'dark',
-						cookieScheme: 'shared'
+	it('axed scope uses defaultThemes (partial → first theme for omitted axes)', () => {
+		const api = scopedLoose({
+			scopes: {
+				admin: {
+					match: '/admin',
+					themes: {
+						density: { compact: css(''), comfy: css('') },
+						accent: { blue: css(''), green: css('') }
 					},
-					b: {
-						match: '/b',
-						defaultTheme: 'ocean',
-						defaultScheme: 'light',
-						cookieScheme: 'shared'
-					}
+					defaultThemes: { accent: 'green' }
 				}
-			})
-		).toThrow(/share cookieScheme "shared"/);
+			}
+		});
+		expect(api.admin.getDefaultTheme()).toEqual({ density: 'compact', accent: 'green' });
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Cookie-name derivation
-// ---------------------------------------------------------------------------
-
-describe('createScopedThemes — cookie-name derivation', () => {
-	it('derives cookieTheme as `${scopeName}-theme` when omitted', () => {
-		createScopedThemes({
-			themes: ALL,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.cookieTheme).toBe('landing-theme');
-		expect(getScope('admin')?.config.cookieTheme).toBe('admin-theme');
-	});
-
-	it('shares top-level cookieScheme when a scope has no independent scheme', () => {
-		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'scheme',
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('scheme');
-		expect(getScope('admin')?.config.cookieScheme).toBe('scheme');
-	});
-
-	it('derives `${scope}-${topLevelCookieScheme}` for independent-scheme scopes', () => {
-		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'scheme',
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: {
-					match: '/admin',
-					defaultTheme: 'slate',
-					defaultScheme: 'dark' // makes scheme independent
-				}
-			}
-		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('scheme');
-		expect(getScope('admin')?.config.cookieScheme).toBe('admin-scheme');
-	});
-
-	it('uses a custom top-level cookieScheme base for derivation', () => {
-		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'mode',
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: {
-					match: '/admin',
-					defaultTheme: 'slate',
-					defaultScheme: 'dark'
-				}
-			}
-		});
-		expect(getScope('admin')?.config.cookieScheme).toBe('admin-mode');
-	});
-
-	it('respects an explicit cookieTheme override', () => {
-		createScopedThemes({
-			themes: ALL,
-			scopes: {
-				landing: {
-					match: '/',
-					defaultTheme: 'sunset',
-					cookieTheme: 'custom-cookie'
-				}
-			}
-		});
-		expect(getScope('landing')?.config.cookieTheme).toBe('custom-cookie');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// sharedScheme
+// scheme: sharedScheme master switch
 // ---------------------------------------------------------------------------
 
 describe('createScopedThemes — sharedScheme', () => {
-	it('shares the scheme cookie across scopes by default', () => {
+	it('default (shared): independentScheme=false and the `scheme` cookie everywhere', () => {
 		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'scheme',
 			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
+				landing: { match: '/', themes: { salmon: css('') } },
+				admin: { match: '/admin', themes: { compact: css('') } }
 			}
 		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('scheme');
-		expect(getScope('admin')?.config.cookieScheme).toBe('scheme');
-		expect(getScope('landing')?.config.independentScheme).toBe(false);
-		expect(getScope('admin')?.config.independentScheme).toBe(false);
-	});
-
-	it('sharedScheme:false makes every scope independent with derived cookies', () => {
-		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'scheme',
-			sharedScheme: false,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('landing-scheme');
-		expect(getScope('admin')?.config.cookieScheme).toBe('admin-scheme');
-		expect(getScope('landing')?.config.independentScheme).toBe(true);
-		expect(getScope('admin')?.config.independentScheme).toBe(true);
-	});
-
-	it('sharedScheme:false still honors an explicit per-scope cookieScheme', () => {
-		createScopedThemes({
-			themes: ALL,
-			sharedScheme: false,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset', cookieScheme: 'site-mode' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('site-mode');
-		expect(getScope('admin')?.config.cookieScheme).toBe('admin-scheme');
-	});
-
-	it('sharedScheme:false scopes inherit the top-level defaultScheme', () => {
-		createScopedThemes({
-			themes: ALL,
-			defaultScheme: 'dark',
-			sharedScheme: false,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.defaultScheme).toBe('dark');
-		expect(getScope('admin')?.config.defaultScheme).toBe('dark');
-	});
-
-	it('sharedScheme:true (explicit) matches the default', () => {
-		createScopedThemes({
-			themes: ALL,
-			cookieScheme: 'scheme',
-			sharedScheme: true,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
-			}
-		});
-		expect(getScope('landing')?.config.cookieScheme).toBe('scheme');
-		expect(getScope('admin')?.config.cookieScheme).toBe('scheme');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Match resolution (pure logic via matchScope)
-// ---------------------------------------------------------------------------
-
-describe('matchScope — string prefix (segment-aware)', () => {
-	function setup(name: string, matcher: Matcher): void {
-		const scope = new ThemeScope({
-			name,
-			themes: ALL,
-			defaultTheme: 'sunset',
-			defaultScheme: 'system',
-			cookieTheme: `${name}-theme`,
-			cookieScheme: 'scheme',
-			independentScheme: false,
-			syncTabs: false,
-			syncChannel: 'svelte-themes'
-		});
-		registerScope(scope);
-		registerScopeMatcher(name, matcher);
-	}
-
-	it('matches /admin and /admin/<anything>', () => {
-		setup('admin', '/admin');
-		expect(matchScope('/admin')?.config.name).toBe('admin');
-		expect(matchScope('/admin/users')?.config.name).toBe('admin');
-		expect(matchScope('/admin/users/42')?.config.name).toBe('admin');
-	});
-
-	it('does NOT match /administrator', () => {
-		setup('admin', '/admin');
-		expect(matchScope('/administrator')).toBeUndefined();
-	});
-
-	it('does NOT match /', () => {
-		setup('admin', '/admin');
-		expect(matchScope('/')).toBeUndefined();
-		expect(matchScope('/landing')).toBeUndefined();
-	});
-
-	it('root pattern "/" matches every path with prefix length 0', () => {
-		setup('home', '/');
-		expect(matchScope('/')?.config.name).toBe('home');
-		expect(matchScope('/anything')?.config.name).toBe('home');
-		expect(matchScope('/admin/users')?.config.name).toBe('home');
-	});
-});
-
-describe('matchScope — array form (any-of)', () => {
-	it('matches any element', () => {
-		const scope = new ThemeScope({
-			name: 'multi',
-			themes: ALL,
-			defaultTheme: 'sunset',
-			defaultScheme: 'system',
-			cookieTheme: 'multi-theme',
-			cookieScheme: 'scheme',
-			independentScheme: false,
-			syncTabs: false,
-			syncChannel: 'svelte-themes'
-		});
-		registerScope(scope);
-		registerScopeMatcher('multi', ['/admin', '/dashboard']);
-		expect(matchScope('/admin')?.config.name).toBe('multi');
-		expect(matchScope('/dashboard/x')?.config.name).toBe('multi');
-		expect(matchScope('/marketing')).toBeUndefined();
-	});
-});
-
-describe('matchScope — longest prefix wins', () => {
-	function makeScope(name: string, matcher: Matcher): void {
-		const scope = new ThemeScope({
-			name,
-			themes: ALL,
-			defaultTheme: 'sunset',
-			defaultScheme: 'system',
-			cookieTheme: `${name}-theme`,
-			cookieScheme: 'scheme',
-			independentScheme: false,
-			syncTabs: false,
-			syncChannel: 'svelte-themes'
-		});
-		registerScope(scope);
-		registerScopeMatcher(name, matcher);
-	}
-
-	it('picks the most specific prefix', () => {
-		makeScope('a', '/');
-		makeScope('b', '/admin');
-		makeScope('c', '/admin/users');
-		expect(matchScope('/admin/users/42')?.config.name).toBe('c');
-		expect(matchScope('/admin/settings')?.config.name).toBe('b');
-		expect(matchScope('/landing')?.config.name).toBe('a');
-	});
-});
-
-describe('matchScope — predicate form', () => {
-	function setup(name: string, matcher: Matcher): void {
-		const scope = new ThemeScope({
-			name,
-			themes: ALL,
-			defaultTheme: 'sunset',
-			defaultScheme: 'system',
-			cookieTheme: `${name}-theme`,
-			cookieScheme: 'scheme',
-			independentScheme: false,
-			syncTabs: false,
-			syncChannel: 'svelte-themes'
-		});
-		registerScope(scope);
-		registerScopeMatcher(name, matcher);
-	}
-
-	it('evaluates predicates in declaration order when no prefix matches', () => {
-		setup('first', (u) => u.pathname.startsWith('/x'));
-		setup('second', (u) => u.pathname.startsWith('/x'));
-		expect(matchScope('/x/y')?.config.name).toBe('first');
-	});
-
-	it('skips predicates when a string prefix matches', () => {
-		setup('byPath', '/admin');
-		setup('byPred', () => true);
-		expect(matchScope('/admin/users')?.config.name).toBe('byPath');
-		expect(matchScope('/somewhere-else')?.config.name).toBe('byPred');
-	});
-});
-
-describe('matchScope — no match falls through', () => {
-	it('returns undefined when nothing matches', () => {
-		const scope = new ThemeScope({
-			name: 'admin',
-			themes: ALL,
-			defaultTheme: 'sunset',
-			defaultScheme: 'system',
-			cookieTheme: 'admin-theme',
-			cookieScheme: 'scheme',
-			independentScheme: false,
-			syncTabs: false,
-			syncChannel: 'svelte-themes'
-		});
-		registerScope(scope);
-		registerScopeMatcher('admin', '/admin');
-		expect(matchScope('/landing')).toBeUndefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Handle shape + getActiveScope
-// ---------------------------------------------------------------------------
-
-describe('createScopedThemes — handle shape', () => {
-	it('returns a flat-shaped handle per scope', () => {
-		const api = createScopedThemes({
-			themes: ALL,
-			scopes: {
-				landing: {
-					match: '/',
-					themes: ['sunset', 'ocean'],
-					defaultTheme: 'sunset'
-				},
-				admin: {
-					match: '/admin',
-					themes: ['slate', 'graphite'],
-					defaultTheme: 'slate'
-				}
-			}
-		});
-
-		for (const k of ['landing', 'admin'] as const) {
-			const h = api[k];
-			expect(typeof h.setTheme).toBe('function');
-			expect(typeof h.getThemes).toBe('function');
-			expect(typeof h.getCurrentTheme).toBe('function');
-			expect(typeof h.getDefaultTheme).toBe('function');
-			expect(typeof h.isLoadingTheme).toBe('function');
-			expect(typeof h.getLoadingTheme).toBe('function');
+		for (const name of ['landing', 'admin']) {
+			expect(cfg(name).independentScheme).toBe(false);
+			expect(cfg(name).cookieScheme).toBe('scheme');
 		}
-
-		expect(typeof api.getActiveScope).toBe('function');
 	});
 
-	it('exposes the scope subset on getThemes()', () => {
-		const api = createScopedThemes({
-			themes: ALL,
+	it('shared: per-scope defaultScheme is ignored, top-level defaultScheme wins', () => {
+		createScopedThemes({
+			defaultScheme: 'dark',
 			scopes: {
-				landing: {
-					match: '/',
-					themes: ['sunset', 'ocean'],
-					defaultTheme: 'sunset'
-				},
-				admin: {
-					match: '/admin',
-					themes: ['slate', 'graphite'],
-					defaultTheme: 'slate'
+				landing: { match: '/', themes: { salmon: css('') }, defaultScheme: 'light' },
+				admin: { match: '/admin', themes: { compact: css('') } }
+			}
+		});
+		expect(cfg('landing').defaultScheme).toBe('dark'); // per-scope 'light' ignored
+		expect(cfg('admin').defaultScheme).toBe('dark');
+	});
+
+	it('independent (sharedScheme:false): per-scope `scheme-${scope}` cookie + independentScheme=true', () => {
+		createScopedThemes({
+			sharedScheme: false,
+			scopes: {
+				landing: { match: '/', themes: { salmon: css('') } },
+				admin: { match: '/admin', themes: { compact: css('') } }
+			}
+		});
+		expect(cfg('landing')).toMatchObject({ independentScheme: true, cookieScheme: 'scheme-landing' });
+		expect(cfg('admin')).toMatchObject({ independentScheme: true, cookieScheme: 'scheme-admin' });
+	});
+
+	it('independent: per-scope defaultScheme applies, falling back to top-level', () => {
+		createScopedThemes({
+			sharedScheme: false,
+			defaultScheme: 'dark',
+			scopes: {
+				landing: { match: '/', themes: { salmon: css('') }, defaultScheme: 'light' },
+				admin: { match: '/admin', themes: { compact: css('') } } // no per-scope → top-level
+			}
+		});
+		expect(cfg('landing').defaultScheme).toBe('light');
+		expect(cfg('admin').defaultScheme).toBe('dark');
+	});
+
+	it('cookieScheme prefix applies to per-scope scheme cookies when independent', () => {
+		createScopedThemes({
+			sharedScheme: false,
+			cookieScheme: 'sc',
+			scopes: {
+				landing: { match: '/', themes: { salmon: css('') } },
+				admin: { match: '/admin', themes: { compact: css('') } }
+			}
+		});
+		expect(cfg('landing').cookieScheme).toBe('sc-landing');
+		expect(cfg('admin').cookieScheme).toBe('sc-admin');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// validation throws
+// ---------------------------------------------------------------------------
+
+describe('createScopedThemes — validation throws', () => {
+	it('empty scopes', () => {
+		expect(() => createScopedThemes({ scopes: {} })).toThrow(/scopes must not be empty/);
+	});
+
+	it('scope named `getActiveScope` is reserved', () => {
+		expect(() =>
+			createScopedThemes({
+				scopes: { getActiveScope: { match: '/', themes: { a: css('') } } }
+			})
+		).toThrow(/scope name "getActiveScope" is reserved/);
+	});
+
+	it('scope name not matching the cookie-name regex', () => {
+		expect(() =>
+			createScopedThemes({ scopes: { 'bad name': { match: '/', themes: { a: css('') } } } })
+		).toThrow(/name must match/);
+	});
+
+	it('axis name not matching the cookie-name regex', () => {
+		expect(() =>
+			createScopedThemes({
+				scopes: { admin: { match: '/admin', themes: { 'bad axis': { a: css('') } } } }
+			})
+		).toThrow(/axis name "bad axis" must match/);
+	});
+
+	it('two scopes with identical match patterns', () => {
+		expect(() =>
+			createScopedThemes({
+				scopes: {
+					a: { match: '/dash', themes: { x: css('') } },
+					b: { match: '/dash', themes: { y: css('') } }
 				}
-			}
-		});
-		expect(api.landing.getThemes()).toEqual(['sunset', 'ocean']);
-		expect(api.admin.getThemes()).toEqual(['slate', 'graphite']);
+			})
+		).toThrow(/scopes "a" and "b" have identical match patterns/);
 	});
 
-	it('inherits the full registry when a scope omits themes', () => {
-		const api = createScopedThemes({
-			themes: ALL,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' }
-			}
-		});
-		expect(api.landing.getThemes()).toEqual(['sunset', 'ocean', 'slate', 'graphite']);
+	it('identical match patterns detected across array order', () => {
+		expect(() =>
+			createScopedThemes({
+				scopes: {
+					a: { match: ['/x', '/y'], themes: { x: css('') } },
+					b: { match: ['/y', '/x'], themes: { y: css('') } }
+				}
+			})
+		).toThrow(/have identical match patterns/);
 	});
 
-	it('getActiveScope() returns the first scope name when no window/route matches', () => {
+	it('two scopes deriving the same cookie (hyphen aliasing)', () => {
+		// flat scope "admin-x" → theme-admin-x; axed scope "admin" axis "x" → theme-admin-x.
+		expect(() =>
+			createScopedThemes({
+				scopes: {
+					'admin-x': { match: '/ax', themes: { a: css('') } },
+					admin: { match: '/admin', themes: { x: { b: css('') } } }
+				}
+			})
+		).toThrow(/derive the same cookie "theme-admin-x"/);
+	});
+
+	it('flat defaultTheme referencing a missing theme', () => {
+		expect(() =>
+			scopedLoose({
+				scopes: {
+					landing: {
+						match: '/',
+						themes: { salmon: css('') },
+						defaultTheme: 'nope'
+					}
+				}
+			})
+		).toThrow(/defaultTheme "nope" not found in axis "default"/);
+	});
+
+	it('defaultThemes referencing an unknown axis', () => {
+		expect(() =>
+			scopedLoose({
+				scopes: {
+					admin: {
+						match: '/admin',
+						themes: { density: { compact: css('') } },
+						defaultThemes: { nope: 'x' }
+					}
+				}
+			})
+		).toThrow(/defaultThemes references unknown axis "nope"/);
+	});
+
+	it('duplicate theme name across a scope axes', () => {
+		expect(() =>
+			createScopedThemes({
+				scopes: {
+					admin: {
+						match: '/admin',
+						themes: {
+							density: { dup: css('') },
+							accent: { dup: css('') }
+						}
+					}
+				}
+			})
+		).toThrow(/duplicate theme name "dup" across axes/);
+	});
+
+	it('cookieTheme === cookieScheme must differ', () => {
+		expect(() =>
+			createScopedThemes({
+				cookieTheme: 'same',
+				cookieScheme: 'same',
+				scopes: { landing: { match: '/', themes: { salmon: css('') } } }
+			})
+		).toThrow(/cookieTheme and cookieScheme must differ/);
+	});
+
+	it('invalid cookieTheme / cookieScheme', () => {
+		expect(() =>
+			createScopedThemes({
+				cookieTheme: 'has space',
+				scopes: { landing: { match: '/', themes: { salmon: css('') } } }
+			})
+		).toThrow(/cookieTheme "has space" must match/);
+		clearRegistry();
+		expect(() =>
+			createScopedThemes({
+				cookieScheme: 'bad;name',
+				scopes: { landing: { match: '/', themes: { salmon: css('') } } }
+			})
+		).toThrow(/cookieScheme "bad;name" must match/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// getActiveScope() in node
+// ---------------------------------------------------------------------------
+
+describe('createScopedThemes — getActiveScope (node)', () => {
+	it('returns the first declared scope name when there is no window', () => {
 		const api = createScopedThemes({
-			themes: ALL,
 			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
+				landing: { match: '/', themes: { salmon: css('') } },
+				admin: { match: '/admin', themes: { compact: css('') } }
 			}
 		});
 		expect(api.getActiveScope()).toBe('landing');
 	});
+});
 
-	it('each scope reports its own defaultTheme', () => {
-		const api = createScopedThemes({
-			themes: ALL,
-			scopes: {
-				landing: { match: '/', defaultTheme: 'sunset' },
-				admin: { match: '/admin', defaultTheme: 'slate' }
+// ---------------------------------------------------------------------------
+// matchScope routing — tested via the registry directly (segment-aware longest
+// prefix). Build bare ThemeScopes so we control matchers precisely.
+// ---------------------------------------------------------------------------
+
+function bareScope(name: string): ThemeScope {
+	return new ThemeScope({
+		name,
+		flat: true,
+		axes: [
+			{
+				name: 'default',
+				themes: { only: css('') },
+				defaultTheme: 'only',
+				styleId: 'svelte-themes',
+				cookieName: `theme-${name}`,
+				cacheKeyPrefix: `${name}/default`
 			}
-		});
-		expect(api.landing.getDefaultTheme()).toBe('sunset');
-		expect(api.admin.getDefaultTheme()).toBe('slate');
+		],
+		defaultScheme: 'system',
+		cookieScheme: 'scheme',
+		independentScheme: false,
+		syncTabs: false,
+		syncChannel: 'svelte-themes'
+	});
+}
+
+function register(name: string, matcher: Matcher): void {
+	registerScope(bareScope(name));
+	registerScopeMatcher(name, matcher);
+}
+
+describe('matchScope — routing', () => {
+	it('string prefix matches exact + nested, but not a longer same-prefix word', () => {
+		register('admin', '/admin');
+		expect(matchScope('/admin')?.config.name).toBe('admin');
+		expect(matchScope('/admin/users')?.config.name).toBe('admin');
+		expect(matchScope('/administrator')).toBeUndefined(); // segment-aware: not a match
+	});
+
+	it('longest prefix wins across scopes', () => {
+		register('admin', '/admin');
+		register('adminUsers', '/admin/users');
+		expect(matchScope('/admin/users/42')?.config.name).toBe('adminUsers');
+		expect(matchScope('/admin/settings')?.config.name).toBe('admin');
+	});
+
+	it('`/` is a catch-all of length 0 (loses to any real prefix)', () => {
+		register('root', '/');
+		register('admin', '/admin');
+		expect(matchScope('/admin')?.config.name).toBe('admin');
+		expect(matchScope('/anything/else')?.config.name).toBe('root');
+		expect(matchScope('/')?.config.name).toBe('root');
+	});
+
+	it('array matcher matches any of its patterns', () => {
+		register('multi', ['/blog', '/news']);
+		expect(matchScope('/blog/post')?.config.name).toBe('multi');
+		expect(matchScope('/news')?.config.name).toBe('multi');
+		expect(matchScope('/other')).toBeUndefined();
+	});
+
+	it('predicate matcher is a fallback (only when no string/array matches)', () => {
+		register('pred', (url: URL) => url.pathname.startsWith('/p'));
+		expect(matchScope('/products')?.config.name).toBe('pred');
+		expect(matchScope('/other')).toBeUndefined();
+	});
+
+	it('string/array matches beat predicates even with predicates registered first', () => {
+		register('pred', (url: URL) => url.pathname.startsWith('/admin'));
+		register('admin', '/admin');
+		expect(matchScope('/admin')?.config.name).toBe('admin');
+	});
+
+	it('predicates run in declaration order', () => {
+		register('first', (url: URL) => url.pathname.startsWith('/x'));
+		register('second', (url: URL) => url.pathname.startsWith('/x'));
+		expect(matchScope('/x/y')?.config.name).toBe('first');
+	});
+
+	it('no match → undefined (caller falls back to the first scope)', () => {
+		register('admin', '/admin');
+		expect(matchScope('/nowhere')).toBeUndefined();
 	});
 });

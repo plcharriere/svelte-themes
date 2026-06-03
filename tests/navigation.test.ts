@@ -4,51 +4,44 @@ import {
 	applyActiveScopeOnNavigation,
 	clearRegistry,
 	getLastActiveScopeName,
-	idlePreloadCandidates,
 	registerScope,
 	registerScopeMatcher,
 	setLastActiveScopeName,
 	shouldSwapOnNavigation,
-	ThemeScope,
-	type ThemeScopeConfig
+	ThemeScope
 } from '../src/lib/core.svelte.js';
 import type { Matcher, ThemeLoader } from '../src/lib/types.js';
 
 const css = (s: string): ThemeLoader => () => Promise.resolve(s);
 
-const ALL = {
-	sunset: css(':root {}'),
-	ocean: css(':root {}'),
-	slate: css(':root {}'),
-	graphite: css(':root {}')
-} as const;
+beforeEach(() => clearRegistry());
 
-function makeScope(
-	name: string,
-	overrides: Partial<ThemeScopeConfig> = {}
-): ThemeScope {
+function makeScope(name: string): ThemeScope {
 	return new ThemeScope({
 		name,
-		themes: ALL,
-		defaultTheme: 'sunset',
+		flat: true,
+		axes: [
+			{
+				name: 'default',
+				themes: { only: css(':root {}') },
+				defaultTheme: 'only',
+				styleId: 'svelte-themes',
+				cookieName: `theme-${name}`,
+				cacheKeyPrefix: `${name}/default`
+			}
+		],
 		defaultScheme: 'system',
-		cookieTheme: `${name}-theme`,
 		cookieScheme: 'scheme',
 		independentScheme: false,
 		syncTabs: false,
-		syncChannel: 'svelte-themes',
-		...overrides
+		syncChannel: 'svelte-themes'
 	});
 }
 
-function register(name: string, matcher: Matcher, scope: ThemeScope): void {
-	registerScope(scope);
+function register(name: string, matcher: Matcher): void {
+	registerScope(makeScope(name));
 	registerScopeMatcher(name, matcher);
 }
-
-beforeEach(() => {
-	clearRegistry();
-});
 
 // ---------------------------------------------------------------------------
 // shouldSwapOnNavigation — pure decision
@@ -74,82 +67,23 @@ describe('shouldSwapOnNavigation', () => {
 	it('returns true on the very first navigation (prev null)', () => {
 		expect(shouldSwapOnNavigation(null, 'landing')).toBe(true);
 	});
-});
 
-// ---------------------------------------------------------------------------
-// idlePreloadCandidates — pure enumeration
-// ---------------------------------------------------------------------------
-
-describe('idlePreloadCandidates', () => {
-	it('skips the primary scope, yields the rest with their default theme', () => {
-		const scopes = new Map<string, ThemeScope>();
-		scopes.set(
-			'landing',
-			makeScope('landing', { defaultTheme: 'sunset' })
-		);
-		scopes.set('admin', makeScope('admin', { defaultTheme: 'slate' }));
-		scopes.set(
-			'marketing',
-			makeScope('marketing', { defaultTheme: 'ocean' })
-		);
-
-		const out = idlePreloadCandidates(scopes, 'landing');
-		expect(out).toEqual([
-			{ scopeName: 'admin', themeName: 'slate' },
-			{ scopeName: 'marketing', themeName: 'ocean' }
-		]);
-	});
-
-	it('returns an empty array when only the primary scope exists', () => {
-		const scopes = new Map<string, ThemeScope>();
-		scopes.set('only', makeScope('only'));
-		expect(idlePreloadCandidates(scopes, 'only')).toEqual([]);
-	});
-
-	it('uses each scope `defaultTheme` when document is unavailable (node env)', () => {
-		// In the node test env there is no `document`, so
-		// resolveTargetThemeFromCookie() falls back to defaultTheme — exactly
-		// the "no cookie set yet" branch we want to test.
-		const scopes = new Map<string, ThemeScope>();
-		scopes.set(
-			'home',
-			makeScope('home', { defaultTheme: 'sunset' })
-		);
-		scopes.set(
-			'admin',
-			makeScope('admin', { defaultTheme: 'graphite' })
-		);
-		const out = idlePreloadCandidates(scopes, 'home');
-		expect(out).toEqual([{ scopeName: 'admin', themeName: 'graphite' }]);
-	});
-
-	it('preserves declaration order from the registry Map', () => {
-		const scopes = new Map<string, ThemeScope>();
-		scopes.set('a', makeScope('a', { defaultTheme: 'sunset' }));
-		scopes.set('b', makeScope('b', { defaultTheme: 'ocean' }));
-		scopes.set('c', makeScope('c', { defaultTheme: 'slate' }));
-		scopes.set('d', makeScope('d', { defaultTheme: 'graphite' }));
-
-		expect(idlePreloadCandidates(scopes, 'b')).toEqual([
-			{ scopeName: 'a', themeName: 'sunset' },
-			{ scopeName: 'c', themeName: 'slate' },
-			{ scopeName: 'd', themeName: 'graphite' }
-		]);
+	it('returns false when both prev and next are null', () => {
+		expect(shouldSwapOnNavigation(null, null)).toBe(false);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// applyActiveScopeOnNavigation — integration via lastActiveScopeName tracking
+// applyActiveScopeOnNavigation — scope bookkeeping only (no DOM in node)
 // ---------------------------------------------------------------------------
 //
-// In node there is no `document`, so the actual DOM apply inside
-// `applyScopeStateFromCookies` is a no-op. We still verify that the
-// last-active-scope bookkeeping moves correctly when the route changes.
+// In the node test env there is no `document`, so `applyStateFromCookies` and
+// `initClient` are no-ops; only the last-active-scope tracking is observable.
 
 describe('applyActiveScopeOnNavigation — scope tracking', () => {
 	it('updates last-active when crossing scopes', async () => {
-		register('landing', '/', makeScope('landing'));
-		register('admin', '/admin', makeScope('admin'));
+		register('landing', '/');
+		register('admin', '/admin');
 		setLastActiveScopeName('landing');
 
 		await applyActiveScopeOnNavigation('/admin/users');
@@ -159,8 +93,8 @@ describe('applyActiveScopeOnNavigation — scope tracking', () => {
 		expect(getLastActiveScopeName()).toBe('landing');
 	});
 
-	it('does not update when staying in the same scope', async () => {
-		register('admin', '/admin', makeScope('admin'));
+	it('does not change last-active when staying within the same scope', async () => {
+		register('admin', '/admin');
 		setLastActiveScopeName('admin');
 
 		await applyActiveScopeOnNavigation('/admin/settings');
@@ -168,8 +102,8 @@ describe('applyActiveScopeOnNavigation — scope tracking', () => {
 	});
 
 	it('falls back to the first scope when nothing matches', async () => {
-		register('home', '/home', makeScope('home'));
-		register('admin', '/admin', makeScope('admin'));
+		register('home', '/home');
+		register('admin', '/admin');
 		setLastActiveScopeName(null);
 
 		await applyActiveScopeOnNavigation('/nowhere');
@@ -179,12 +113,12 @@ describe('applyActiveScopeOnNavigation — scope tracking', () => {
 	it('is a no-op when no scopes are registered', async () => {
 		setLastActiveScopeName(null);
 		await applyActiveScopeOnNavigation('/anywhere');
-		expect(getLastActiveScopeName()).toBe(null);
+		expect(getLastActiveScopeName()).toBeNull();
 	});
 
 	it('clearRegistry resets last-active', () => {
 		setLastActiveScopeName('something');
 		clearRegistry();
-		expect(getLastActiveScopeName()).toBe(null);
+		expect(getLastActiveScopeName()).toBeNull();
 	});
 });

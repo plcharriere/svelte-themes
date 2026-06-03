@@ -9,19 +9,23 @@ function active(): ThemeScope {
 	return scope;
 }
 
-export function getThemes(): string[] {
+// Root dispatchers route to the active scope. They're loosely typed (the active
+// scope's flat/axed shape isn't known at compile time) — flat scopes return
+// scalars, axed scopes return per-axis objects.
+
+export function getThemes(): string[] | Record<string, string[]> {
 	return active().getThemes();
 }
 
-export function getCurrentTheme(): string {
+export function getCurrentTheme(): string | Record<string, string> {
 	return active().getCurrentTheme();
 }
 
-export function getDefaultTheme(): string {
+export function getDefaultTheme(): string | Record<string, string> {
 	return active().getDefaultTheme();
 }
 
-export function getThemeSource(): 'cookie' | 'default' {
+export function getThemeSource(): ('cookie' | 'default') | Record<string, 'cookie' | 'default'> {
 	return active().getThemeSource();
 }
 
@@ -33,7 +37,7 @@ export function isLoadingTheme(name?: string): boolean {
 	return active().isLoadingTheme(name);
 }
 
-export function getLoadingTheme(): string | null {
+export function getLoadingTheme(): string | null | Record<string, string> {
 	return active().getLoadingTheme();
 }
 

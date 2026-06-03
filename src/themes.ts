@@ -1,15 +1,21 @@
 import { createThemes } from '$lib';
 
+// Multi-axis demo: a `palette` axis (the 43 colour themes) composed with a
+// `radius` axis (corner roundness). Both are active at once — the page renders
+// the chosen palette + the chosen radius together.
 export const {
 	setTheme,
 	getThemes,
 	getCurrentTheme,
 	getDefaultTheme,
+	getThemeSource,
 	isLoadingTheme,
 	getLoadingTheme
 } = createThemes({
+	defaultThemes: { palette: 'default', radius: 'soft' },
 	themes: {
-		default: () => import('./themes/default.css?inline'),
+		palette: {
+			default: () => import('./themes/default.css?inline'),
 		'amber-minimal': () => import('./themes/amber-minimal.css?inline'),
 		'amethyst-haze': () => import('./themes/amethyst-haze.css?inline'),
 		'bold-tech': () => import('./themes/bold-tech.css?inline'),
@@ -52,5 +58,11 @@ export const {
 		vercel: () => import('./themes/vercel.css?inline'),
 		'vintage-paper': () => import('./themes/vintage-paper.css?inline'),
 		'violet-bloom': () => import('./themes/violet-bloom.css?inline')
+		},
+		radius: {
+			sharp: () => import('./themes/radius-sharp.css?inline'),
+			soft: () => import('./themes/radius-soft.css?inline'),
+			round: () => import('./themes/radius-round.css?inline')
+		}
 	}
 });

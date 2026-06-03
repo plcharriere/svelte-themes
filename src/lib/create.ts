@@ -1,87 +1,72 @@
-import { setConfig } from './config.js';
-import {
-	clearRegistry,
-	registerScope,
-	ThemeScope,
-	type ThemeScopeConfig
-} from './core.svelte.js';
+import { buildAxisConfigs, COOKIE_NAME_RE, validateDefaultThemesKeys } from './build.js';
+import { clearRegistry, registerScope, ThemeScope, type ThemeScopeConfig } from './core.svelte.js';
+import { normalizeThemes } from './normalize.js';
 import type { Scheme, ThemeLoader, ThemesAPI, ThemesConfig } from './types.js';
-
-const COOKIE_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 const FLAT_SCOPE_NAME = 'default';
 
 /**
- * Register a single flat themes system. For per-section theming use
- * `createScopedThemes` from `@plcharriere/svelte-themes` instead — it has its
- * own entry point so the scoped machinery tree-shakes out of flat-only bundles.
+ * Register a single themes system (one implicit, always-active scope). `themes`
+ * may be flat (`{ name: loader }`), axed (`{ axis: { name: loader } }`), or
+ * mixed. For per-section theming use `createScopedThemes`.
  */
-export function createThemes<T extends Record<string, ThemeLoader>>(
+export function createThemes<const T extends Record<string, unknown>>(
 	options: ThemesConfig<T>
 ): ThemesAPI<T> {
-	const names = Object.keys(options.themes);
-	if (names.length === 0) {
-		throw new Error('createThemes: no themes provided');
-	}
-	const defaultTheme = options.defaultTheme ?? (names[0] as keyof T & string);
-	if (!Object.hasOwn(options.themes, defaultTheme)) {
-		throw new Error(`createThemes: defaultTheme "${defaultTheme}" not found`);
-	}
+	const norm = normalizeThemes(options.themes as Record<string, unknown>, 'createThemes');
+
 	const cookieTheme = options.cookieTheme ?? 'theme';
 	const cookieScheme = options.cookieScheme ?? 'scheme';
 	if (!COOKIE_NAME_RE.test(cookieTheme)) {
-		throw new Error(
-			`createThemes: cookieTheme "${cookieTheme}" must match ${COOKIE_NAME_RE}`
-		);
+		throw new Error(`createThemes: cookieTheme "${cookieTheme}" must match ${COOKIE_NAME_RE}`);
 	}
 	if (!COOKIE_NAME_RE.test(cookieScheme)) {
-		throw new Error(
-			`createThemes: cookieScheme "${cookieScheme}" must match ${COOKIE_NAME_RE}`
-		);
+		throw new Error(`createThemes: cookieScheme "${cookieScheme}" must match ${COOKIE_NAME_RE}`);
+	}
+	if (cookieTheme === cookieScheme) {
+		throw new Error(`createThemes: cookieTheme and cookieScheme must differ ("${cookieTheme}")`);
 	}
 
-	const defaultScheme: Scheme = options.defaultScheme ?? 'system';
-	const syncTabs = options.syncTabs ?? true;
-	const syncChannel = options.syncChannel ?? 'svelte-themes';
+	const defaultThemes = options.defaultThemes as Record<string, string> | undefined;
+	validateDefaultThemesKeys(norm, defaultThemes, 'createThemes');
 
-	// Tear down any prior scope (and its DOM/BC listeners) before swapping the
-	// singleton config. Matches `createScopedThemes`'s order.
-	clearRegistry();
-
-	setConfig({
-		themes: options.themes,
-		defaultTheme,
-		defaultScheme,
+	const axes = buildAxisConfigs({
+		scopeName: FLAT_SCOPE_NAME,
+		scopeSegment: null,
+		norm,
+		defaultTheme: options.defaultTheme as string | undefined,
+		defaultThemes,
 		cookieTheme,
-		cookieScheme,
-		syncTabs,
-		syncChannel
+		label: 'createThemes'
 	});
 
 	const scopeConfig: ThemeScopeConfig = {
 		name: FLAT_SCOPE_NAME,
-		themes: options.themes,
-		defaultTheme,
-		defaultScheme,
-		cookieTheme,
+		flat: norm.flat,
+		axes,
+		defaultScheme: (options.defaultScheme as Scheme | undefined) ?? 'system',
 		cookieScheme,
-		// Flat mode owns its scheme outright — there's only one scope and no
-		// shared top-level scheme cookie above it.
+		// One scope owns its scheme outright — no shared top-level scheme above it.
 		independentScheme: true,
-		syncTabs,
-		syncChannel
+		syncTabs: options.syncTabs ?? true,
+		syncChannel: options.syncChannel ?? 'svelte-themes'
 	};
 
+	clearRegistry();
 	const scope = new ThemeScope(scopeConfig);
 	registerScope(scope);
 	scope.initClient();
 
 	return {
-		setTheme: (name, scheme) => scope.setTheme(name, scheme),
-		getThemes: () => scope.getThemes() as (keyof T & string)[],
-		getCurrentTheme: () => scope.getCurrentTheme() as keyof T & string,
-		getDefaultTheme: () => scope.getDefaultTheme() as keyof T & string,
-		isLoadingTheme: (name) => scope.isLoadingTheme(name),
-		getLoadingTheme: () => scope.getLoadingTheme() as (keyof T & string) | null
-	};
+		setTheme: (name: string, scheme?: Scheme) => scope.setTheme(name, scheme),
+		getThemes: () => scope.getThemes(),
+		getCurrentTheme: () => scope.getCurrentTheme(),
+		getDefaultTheme: () => scope.getDefaultTheme(),
+		getThemeSource: () => scope.getThemeSource(),
+		isLoadingTheme: (name?: string) => scope.isLoadingTheme(name),
+		getLoadingTheme: () => scope.getLoadingTheme()
+	} as ThemesAPI<T>;
 }
+
+// Re-export for internal use by scoped.ts.
+export type { ThemeLoader };

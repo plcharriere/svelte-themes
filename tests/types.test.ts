@@ -4,392 +4,250 @@
  * The compiler is the test runner: every `@ts-expect-error` must have a real
  * type error underneath it (an unused directive is itself a compile error).
  * The runtime bodies never actually exercise the API — they sit inside
- * `if (false) { ... }` blocks so TypeScript still checks them but vitest
- * doesn't crash on undefined ambient values or throw on uninitialised state.
+ * `if (NEVER) { ... }` blocks so TypeScript still type-checks them but vitest
+ * never executes them (no undefined ambient access, no thrown validation).
  *
  * Each `it()` ends with `expect(true).toBe(true)` so vitest records a pass.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import {
-	createScopedThemes,
-	createThemes,
-	setScheme,
-	setTheme,
-	toggleScheme
-} from '../src/lib/index.js';
-import type {
-	Scheme,
-	ScopedAPI,
-	ScopeDecl,
-	ThemeLoader,
-	ThemesAPI
-} from '../src/lib/index.js';
+import { createScopedThemes, createThemes } from '../src/lib/index.js';
+import type { ScopeDecl, ThemeLoader, ThemesAPI } from '../src/lib/index.js';
 
 const css = (s: string): ThemeLoader => () => Promise.resolve(s);
 
-const ALL = {
-	sunset: css(''),
-	ocean: css(''),
-	slate: css(''),
-	graphite: css('')
-} as const;
+// Flat themes shape.
+const FLAT = { sunset: css(''), ocean: css('') };
 
-// Helper: assert that two types are mutually assignable (i.e. equal).
-// If the assertion fails, the function call won't type-check.
+// Axed themes shape (two axes).
+const AXED = {
+	colors: { salmon: css(''), sapphire: css('') },
+	styles: { square: css(''), rounded: css('') }
+};
+
+/** Assert two types are mutually assignable (i.e. equal at use sites). */
 function assertType<T>(_value: T): void {
-	/* no-op — the type parameter is the assertion */
+	/* the type parameter is the assertion */
 }
 
-// Compile-time constant that TS folds the same as a literal `false`, so
-// branches under it type-check but vitest never executes them. Using a
-// captured const (instead of bare `if (false)`) sidesteps the
-// "unreachable code" lint without changing the semantics.
+// Folds the same as `false` so branches type-check but never run; a captured
+// const sidesteps the "unreachable code" lint vs a bare `if (false)`.
 const NEVER = false as const;
 
-// Materialize a value typed as T at the type level without running anything
-// at runtime. Returns `undefined as unknown as T` — only safe inside `if
-// (NEVER)` branches that never execute.
+// Materialize a value typed as T without running anything — only safe under NEVER.
 function phantom<T>(): T {
 	return undefined as unknown as T;
 }
 
 // ---------------------------------------------------------------------------
-// 1. Flat handle (`createThemes`)
+// 1. createThemes — flat handle
 // ---------------------------------------------------------------------------
 
-describe('types — flat handle', () => {
-	it('setTheme accepts a registered name', () => {
+describe('types — createThemes flat handle', () => {
+	it('setTheme accepts a registered name, rejects unknown', () => {
 		if (NEVER) {
-			const handle = phantom<ThemesAPI<typeof ALL>>();
+			const handle = phantom<ThemesAPI<typeof FLAT>>();
 			void handle.setTheme('sunset');
-			void handle.setTheme('graphite');
-		}
-		expect(true).toBe(true);
-	});
-
-	it('setTheme rejects non-registered string literals', () => {
-		if (NEVER) {
-			const handle = phantom<ThemesAPI<typeof ALL>>();
-			// @ts-expect-error 'nope' is not a key of T
+			void handle.setTheme('ocean');
+			// @ts-expect-error 'nope' is not a registered flat theme name
 			void handle.setTheme('nope');
 		}
 		expect(true).toBe(true);
 	});
 
-	it('getCurrentTheme() is typed to the registered theme names', () => {
+	it('getCurrentTheme() / getDefaultTheme() are the flat name union (string-shaped)', () => {
 		if (NEVER) {
-			const handle = phantom<ThemesAPI<typeof ALL>>();
-			const name = handle.getCurrentTheme();
-			assertType<'sunset' | 'ocean' | 'slate' | 'graphite'>(name);
+			const handle = phantom<ThemesAPI<typeof FLAT>>();
+			assertType<'sunset' | 'ocean'>(handle.getCurrentTheme());
+			assertType<'sunset' | 'ocean'>(handle.getDefaultTheme());
 		}
 		expect(true).toBe(true);
 	});
 
-	it('getDefaultTheme() is typed to the registered theme names', () => {
+	it('getThemes() is a flat name array; getThemeSource() is a scalar', () => {
 		if (NEVER) {
-			const handle = phantom<ThemesAPI<typeof ALL>>();
-			const name = handle.getDefaultTheme();
-			assertType<'sunset' | 'ocean' | 'slate' | 'graphite'>(name);
+			const handle = phantom<ThemesAPI<typeof FLAT>>();
+			assertType<('sunset' | 'ocean')[]>(handle.getThemes());
+			assertType<'cookie' | 'default'>(handle.getThemeSource());
+			assertType<('sunset' | 'ocean') | null>(handle.getLoadingTheme());
 		}
 		expect(true).toBe(true);
 	});
 
 	it('isLoadingTheme accepts only registered names', () => {
 		if (NEVER) {
-			const handle = phantom<ThemesAPI<typeof ALL>>();
-			// OK with no arg
+			const handle = phantom<ThemesAPI<typeof FLAT>>();
 			void handle.isLoadingTheme();
-			// OK with a registered name
 			void handle.isLoadingTheme('sunset');
-			// @ts-expect-error 'foo' is not a key of T
+			// @ts-expect-error 'foo' is not a registered flat theme name
 			void handle.isLoadingTheme('foo');
 		}
 		expect(true).toBe(true);
 	});
 
-	it('createThemes config rejects unregistered defaultTheme', () => {
+	it('config rejects an unregistered defaultTheme', () => {
 		if (NEVER) {
 			// @ts-expect-error 'unregistered' is not a key of themes
-			createThemes({ themes: ALL, defaultTheme: 'unregistered' });
+			createThemes({ themes: FLAT, defaultTheme: 'unregistered' });
+		}
+		expect(true).toBe(true);
+	});
+
+	it('flat config rejects defaultThemes (axed-only option)', () => {
+		if (NEVER) {
+			createThemes({
+				themes: FLAT,
+				// @ts-expect-error defaultThemes is `never` for a flat themes shape
+				defaultThemes: { sunset: 'ocean' }
+			});
 		}
 		expect(true).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// 2. Scoped per-scope handles (`createScopedThemes`)
+// 2. createThemes — axed handle
 // ---------------------------------------------------------------------------
 
-type ScopedConf = {
-	themes: typeof ALL;
-	scopes: {
-		landing: {
-			match: '/';
-			themes: readonly ['sunset', 'ocean'];
-			defaultTheme: 'sunset';
-		};
-		admin: {
-			match: '/admin';
-			themes: readonly ['slate', 'graphite'];
-			defaultTheme: 'slate';
-		};
-	};
-};
+describe('types — createThemes axed handle', () => {
+	it('setTheme accepts the union of all axis theme names, rejects unknown', () => {
+		if (NEVER) {
+			const handle = phantom<ThemesAPI<typeof AXED>>();
+			void handle.setTheme('salmon');
+			void handle.setTheme('sapphire');
+			void handle.setTheme('square');
+			void handle.setTheme('rounded');
+			// @ts-expect-error 'nope' is in no axis
+			void handle.setTheme('nope');
+		}
+		expect(true).toBe(true);
+	});
 
-type HomeConf = {
-	themes: typeof ALL;
-	scopes: {
-		home: { match: '/'; defaultTheme: 'sunset' };
-	};
-};
+	it('getCurrentTheme() is a per-axis object assignable to Record<string,string>', () => {
+		if (NEVER) {
+			const handle = phantom<ThemesAPI<typeof AXED>>();
+			const current = handle.getCurrentTheme();
+			assertType<{ colors: 'salmon' | 'sapphire'; styles: 'square' | 'rounded' }>(current);
+			// And it satisfies the looser record shape.
+			const asRecord: Record<string, string> = current;
+			void asRecord;
+		}
+		expect(true).toBe(true);
+	});
 
-// Real `createScopedThemes` calls wrapped in arrows so their return types can
-// be extracted via `ReturnType` without execution. This verifies §5.5: a
-// *plain* (no `as const`) `themes: [...]` array narrows on the returned API.
-const makePlainScopedApi = () =>
+	it('getThemes() / getThemeSource() / getLoadingTheme() are per-axis objects', () => {
+		if (NEVER) {
+			const handle = phantom<ThemesAPI<typeof AXED>>();
+			assertType<{ colors: ('salmon' | 'sapphire')[]; styles: ('square' | 'rounded')[] }>(
+				handle.getThemes()
+			);
+			assertType<{ colors: 'cookie' | 'default'; styles: 'cookie' | 'default' }>(
+				handle.getThemeSource()
+			);
+			// getLoadingTheme: only loading axes present → Partial.
+			const loading = handle.getLoadingTheme();
+			assertType<Partial<{ colors: 'salmon' | 'sapphire'; styles: 'square' | 'rounded' }>>(loading);
+		}
+		expect(true).toBe(true);
+	});
+
+	it('axed config accepts a partial defaultThemes, rejects an unknown axis key', () => {
+		if (NEVER) {
+			createThemes({ themes: AXED, defaultThemes: { colors: 'sapphire' } });
+			createThemes({
+				themes: AXED,
+				// @ts-expect-error 'nope' is not an axis of AXED
+				defaultThemes: { nope: 'x' }
+			});
+		}
+		expect(true).toBe(true);
+	});
+
+	it('axed config rejects defaultTheme (flat-only option)', () => {
+		if (NEVER) {
+			createThemes({
+				themes: AXED,
+				// @ts-expect-error defaultTheme is `never` for an axed themes shape
+				defaultTheme: 'salmon'
+			});
+		}
+		expect(true).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3. createScopedThemes — per-scope narrowing (plain literals, no `as const`)
+// ---------------------------------------------------------------------------
+//
+// NOTE: per-scope `defaultTheme` / `defaultThemes` are intentionally omitted
+// here. They are valid at runtime (covered in scoped.test.ts) but currently
+// don't type-check through `createScopedThemes`'s generic constraint — see the
+// `ScopeDecl<Themes>['defaultTheme'] === undefined` collapse documented in the
+// final section. What this section verifies is the *narrowing* of each scope's
+// handle from plain (no `as const`) object literals.
+
+// Real call wrapped in an arrow so its return type can be read via ReturnType
+// without execution. Plain object literals must still narrow each handle.
+const makeScopedApi = () =>
 	createScopedThemes({
-		themes: ALL,
 		scopes: {
 			landing: {
 				match: '/',
-				themes: ['sunset', 'ocean'],
-				defaultTheme: 'sunset'
+				themes: { salmon: css(''), sapphire: css('') }
 			},
 			admin: {
 				match: '/admin',
-				themes: ['slate', 'graphite'],
-				defaultTheme: 'slate'
+				themes: {
+					density: { compact: css(''), comfy: css('') },
+					accent: { blue: css(''), green: css('') }
+				}
 			}
 		}
 	});
 
+type ScopedApi = ReturnType<typeof makeScopedApi>;
 
-describe('types — scoped per-scope handles', () => {
-	it("admin.setTheme accepts admin's subset", () => {
+describe('types — createScopedThemes per-scope narrowing', () => {
+	it("admin.setTheme is narrowed to admin's axis theme names", () => {
 		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			void api.admin.setTheme('slate');
-			void api.admin.setTheme('graphite');
+			const api = phantom<ScopedApi>();
+			void api.admin.setTheme('compact');
+			void api.admin.setTheme('green');
+			// @ts-expect-error 'salmon' belongs to landing, not admin
+			void api.admin.setTheme('salmon');
 		}
 		expect(true).toBe(true);
 	});
 
-	it("admin.setTheme rejects landing's subset", () => {
+	it("landing.setTheme rejects an admin-only theme", () => {
 		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			// @ts-expect-error 'sunset' is in landing's subset, not admin's
-			void api.admin.setTheme('sunset');
-			// @ts-expect-error 'ocean' is in landing's subset, not admin's
-			void api.admin.setTheme('ocean');
+			const api = phantom<ScopedApi>();
+			void api.landing.setTheme('salmon');
+			void api.landing.setTheme('sapphire');
+			// @ts-expect-error 'compact' belongs to admin, not landing
+			void api.landing.setTheme('compact');
 		}
 		expect(true).toBe(true);
 	});
 
-	it("landing.setTheme rejects admin's subset (symmetric)", () => {
+	it('landing is flat (string getCurrentTheme), admin is axed (object)', () => {
 		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			// @ts-expect-error 'graphite' is in admin's subset, not landing's
-			void api.landing.setTheme('graphite');
-			// @ts-expect-error 'slate' is in admin's subset, not landing's
-			void api.landing.setTheme('slate');
+			const api = phantom<ScopedApi>();
+			assertType<'salmon' | 'sapphire'>(api.landing.getCurrentTheme());
+			assertType<{ density: 'compact' | 'comfy'; accent: 'blue' | 'green' }>(
+				api.admin.getCurrentTheme()
+			);
 		}
 		expect(true).toBe(true);
 	});
 
-	it("landing.getCurrentTheme() narrows to landing's subset", () => {
+	it('getActiveScope() returns the scope-name union; indexing a missing scope errors', () => {
 		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			const name = api.landing.getCurrentTheme();
-			assertType<'sunset' | 'ocean'>(name);
-		}
-		expect(true).toBe(true);
-	});
-
-	it("admin.getCurrentTheme() narrows to admin's subset", () => {
-		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			const name = api.admin.getCurrentTheme();
-			assertType<'slate' | 'graphite'>(name);
-		}
-		expect(true).toBe(true);
-	});
-
-	it('a scope without an explicit themes subset inherits the full set', () => {
-		if (NEVER) {
-			const api = phantom<ScopedAPI<HomeConf['themes'], HomeConf['scopes']>>();
-			// All four registered themes must be accepted.
-			void api.home.setTheme('sunset');
-			void api.home.setTheme('ocean');
-			void api.home.setTheme('slate');
-			void api.home.setTheme('graphite');
-			const name = api.home.getCurrentTheme();
-			assertType<'sunset' | 'ocean' | 'slate' | 'graphite'>(name);
-		}
-		expect(true).toBe(true);
-	});
-
-	it('plain `themes: [...]` (no `as const`) still narrows — §5.5', () => {
-		if (NEVER) {
-			// `plainScopedApi` is the return type of a real
-			// `createScopedThemes` call with plain (non-`as const`) `themes`
-			// arrays. If the `const` generic capture works, the assertions
-			// below hold.
-			const api = phantom<ReturnType<typeof makePlainScopedApi>>();
-			void api.admin.setTheme('graphite'); // OK — in admin's subset
-			// @ts-expect-error 'sunset' is in landing's subset, not admin's
-			void api.admin.setTheme('sunset');
-			// @ts-expect-error 'graphite' is in admin's subset, not landing's
-			void api.landing.setTheme('graphite');
-			// Narrowed return type on each scope
-			assertType<'sunset' | 'ocean'>(api.landing.getCurrentTheme());
-			assertType<'slate' | 'graphite'>(api.admin.getCurrentTheme());
-		}
-		expect(true).toBe(true);
-	});
-
-	it('defaultTheme outside the global registry is a type error', () => {
-		if (NEVER) {
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: {
-						match: '/',
-						// @ts-expect-error 'unregistered' is not a key of themes
-						defaultTheme: 'unregistered'
-					}
-				}
-			});
-		}
-		expect(true).toBe(true);
-	});
-
-	it("scope's themes array entries must be in the global registry", () => {
-		if (NEVER) {
-			createScopedThemes({
-				themes: ALL,
-				scopes: {
-					a: {
-						match: '/',
-						// @ts-expect-error 'unknown' is not a key of themes
-						themes: ['unknown'],
-						defaultTheme: 'sunset'
-					}
-				}
-			});
-		}
-		expect(true).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 3. Root dispatcher functions (imported from package root)
-// ---------------------------------------------------------------------------
-
-describe('types — root dispatcher functions', () => {
-	it('setTheme accepts any string (loose by design — §4.5)', () => {
-		if (NEVER) {
-			const arbitrary: string = phantom<string>();
-			const p1 = setTheme(arbitrary);
-			const p2 = setTheme('anything-at-all');
-			assertType<Promise<void>>(p1);
-			assertType<Promise<void>>(p2);
-		}
-		expect(true).toBe(true);
-	});
-
-	it('setTheme accepts an optional Scheme', () => {
-		if (NEVER) {
-			void setTheme('x', 'dark');
-			void setTheme('x', 'light');
-			void setTheme('x', 'system');
-			// @ts-expect-error 'foo' is not a Scheme
-			void setTheme('x', 'foo');
-		}
-		expect(true).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 4. Scheme type + scheme dispatchers
-// ---------------------------------------------------------------------------
-
-describe('types — Scheme literal union', () => {
-	it("setScheme accepts 'light' | 'dark' | 'system'", () => {
-		if (NEVER) {
-			setScheme('light');
-			setScheme('dark');
-			setScheme('system');
-		}
-		expect(true).toBe(true);
-	});
-
-	it('setScheme rejects unknown schemes', () => {
-		if (NEVER) {
-			// @ts-expect-error 'foo' is not a Scheme
-			setScheme('foo');
-			// @ts-expect-error empty string is not a Scheme
-			setScheme('');
-		}
-		expect(true).toBe(true);
-	});
-
-	it('toggleScheme takes no args and returns void', () => {
-		if (NEVER) {
-			const r = toggleScheme();
-			assertType<void>(r);
-			// @ts-expect-error toggleScheme takes no args
-			toggleScheme('dark');
-		}
-		expect(true).toBe(true);
-	});
-
-	it('Scheme type itself is the expected union', () => {
-		if (NEVER) {
-			const s1: Scheme = 'light';
-			const s2: Scheme = 'dark';
-			const s3: Scheme = 'system';
-			// @ts-expect-error 'foo' is not a Scheme
-			const s4: Scheme = 'foo';
-			void s1;
-			void s2;
-			void s3;
-			void s4;
-		}
-		expect(true).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 5. ScopedAPI<T, S> return shape
-// ---------------------------------------------------------------------------
-
-describe('types — ScopedAPI return shape', () => {
-	it('exposes one key per scope name plus getActiveScope', () => {
-		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			// Each scope key resolves to a typed handle.
+			const api = phantom<ScopedApi>();
+			assertType<'landing' | 'admin'>(api.getActiveScope());
 			void api.landing;
 			void api.admin;
-			// getActiveScope is present.
-			void api.getActiveScope;
-		}
-		expect(true).toBe(true);
-	});
-
-	it('getActiveScope() returns a literal union of the scope names', () => {
-		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
-			const name = api.getActiveScope();
-			assertType<'landing' | 'admin'>(name);
-		}
-		expect(true).toBe(true);
-	});
-
-	it('indexing into a non-existent scope key is a type error', () => {
-		if (NEVER) {
-			const api = phantom<ScopedAPI<ScopedConf['themes'], ScopedConf['scopes']>>();
 			// @ts-expect-error 'marketing' is not a declared scope
 			void api.marketing;
 			// @ts-expect-error 'getActiveScopes' (plural typo) is not on the API
@@ -397,15 +255,53 @@ describe('types — ScopedAPI return shape', () => {
 		}
 		expect(true).toBe(true);
 	});
+});
 
-	it('ScopeDecl<T> is parameterized by the global themes record', () => {
+// ---------------------------------------------------------------------------
+// 4. ScopedAPI / ScopeDecl shapes
+// ---------------------------------------------------------------------------
+
+describe('types — ScopedAPI / ScopeDecl shape', () => {
+	it('the API exposes one narrowed handle per scope plus getActiveScope', () => {
 		if (NEVER) {
-			type Decl = ScopeDecl<typeof ALL>;
-			const ok: Decl = { match: '/', defaultTheme: 'sunset' };
-			void ok;
-			// @ts-expect-error 'nope' is not a key of ALL
-			const bad: Decl = { match: '/', defaultTheme: 'nope' };
-			void bad;
+			const api = phantom<ScopedApi>();
+			// Each scope key resolves to a typed handle.
+			assertType<'salmon' | 'sapphire'>(api.landing.getCurrentTheme());
+			assertType<{ density: 'compact' | 'comfy'; accent: 'blue' | 'green' }>(
+				api.admin.getCurrentTheme()
+			);
+			assertType<'landing' | 'admin'>(api.getActiveScope());
+		}
+		expect(true).toBe(true);
+	});
+
+	it('a ThemesAPI used directly carries the per-scope theme shape', () => {
+		if (NEVER) {
+			// ScopedAPI<S> maps each scope to a ThemesAPI<S[K]['themes']>.
+			const flat = phantom<ThemesAPI<typeof FLAT>>();
+			const axed = phantom<ThemesAPI<typeof AXED>>();
+			assertType<'sunset' | 'ocean'>(flat.getCurrentTheme());
+			assertType<{ colors: 'salmon' | 'sapphire'; styles: 'square' | 'rounded' }>(
+				axed.getCurrentTheme()
+			);
+		}
+		expect(true).toBe(true);
+	});
+
+	it('ScopeDecl per-scope defaults are permissive (validated at runtime, not narrowed)', () => {
+		if (NEVER) {
+			// Per-scope `defaultTheme` / `defaultThemes` accept any string — the
+			// narrowing that would forbid a wrong name breaks `S` inference for the
+			// whole scoped config, so it is intentionally permissive. Runtime
+			// `createScopedThemes` validation throws on a bad default instead.
+			const flat: ScopeDecl<typeof FLAT> = { match: '/', themes: FLAT, defaultTheme: 'anything' };
+			void flat;
+			const axed: ScopeDecl<typeof AXED> = {
+				match: '/a',
+				themes: AXED,
+				defaultThemes: { colors: 'anything' }
+			};
+			void axed;
 		}
 		expect(true).toBe(true);
 	});

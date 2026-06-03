@@ -3,51 +3,48 @@ import { getServerTheme } from './ssr-store.js';
 import type { Matcher, Scheme, ThemeLoader } from './types.js';
 
 /**
- * Sentinel scope value used by shared-scheme broadcasts so scopes which
- * don't own their scheme can still react to each other's scheme changes.
- *
- * Real scope names must match `^[A-Za-z0-9_-]+$` (validated by
- * `createScopedThemes`), so the `@` prefix guarantees no collision.
+ * Sentinel scope value used by shared-scheme broadcasts so scopes which don't
+ * own their scheme can still react to each other's scheme changes. Real scope
+ * names match `^[A-Za-z0-9_-]+$`, so the `@` prefix guarantees no collision.
  */
 export const SHARED_SCHEME_SCOPE = '@shared';
 
 export type SyncMessage =
-	| { kind: 'theme'; scope: string; name: string }
+	| { kind: 'theme'; scope: string; axis: string; name: string }
 	| { kind: 'scheme'; scope: string; scheme: Scheme };
 
 type SchemeCookieValue = Scheme | null;
 
-export type ThemeScopeConfig = {
+/** One axis of a scope: its own themes, `<style>` element, and theme cookie. */
+export type AxisConfig = {
 	name: string;
 	themes: Record<string, ThemeLoader>;
 	defaultTheme: string;
+	styleId: string; // 'svelte-themes' (flat) | 'svelte-themes-${name}' (axed)
+	cookieName: string; // fully derived theme cookie name
+	cacheKeyPrefix: string; // `${scopeName}/${axisName}` for the loadCss cache key
+};
+
+export type ThemeScopeConfig = {
+	name: string;
+	flat: boolean; // single anonymous axis → string returns, no axis segment in cookies/ids
+	axes: AxisConfig[];
 	defaultScheme: Scheme;
-	cookieTheme: string;
 	cookieScheme: string;
-	/**
-	 * True when this scope owns its scheme (its own cookie + default).
-	 * False when the scope inherits a shared top-level scheme — the
-	 * cross-tab sync routes scheme messages through the `@shared` sentinel
-	 * so every shared-scheme scope sees the change.
-	 */
 	independentScheme: boolean;
 	syncTabs: boolean;
 	syncChannel: string;
 };
 
-/**
- * Pure helper: build a properly-tagged `SyncMessage`. Extracted so the
- * broadcast shape is unit-testable without instantiating a scope.
- *
- * Theme messages always carry the broadcaster's scope name. Scheme messages
- * use the scope name when the broadcaster owns its scheme, or the
- * `@shared` sentinel when it inherits the top-level scheme.
- */
+// ---------------------------------------------------------------------------
+// Sync-message helpers (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
 export function buildSyncMessage(
 	kind: 'theme',
 	scopeName: string,
 	independentScheme: boolean,
-	payload: { name: string }
+	payload: { axis: string; name: string }
 ): SyncMessage;
 export function buildSyncMessage(
 	kind: 'scheme',
@@ -59,23 +56,21 @@ export function buildSyncMessage(
 	kind: 'theme' | 'scheme',
 	scopeName: string,
 	independentScheme: boolean,
-	payload: { name: string } | { scheme: Scheme }
+	payload: { axis: string; name: string } | { scheme: Scheme }
 ): SyncMessage {
 	if (kind === 'theme') {
-		return { kind: 'theme', scope: scopeName, name: (payload as { name: string }).name };
+		const p = payload as { axis: string; name: string };
+		return { kind: 'theme', scope: scopeName, axis: p.axis, name: p.name };
 	}
 	const tag = independentScheme ? scopeName : SHARED_SCHEME_SCOPE;
 	return { kind: 'scheme', scope: tag, scheme: (payload as { scheme: Scheme }).scheme };
 }
 
 /**
- * Pure decision helper: should this scope act on an incoming sync message?
- *
- * - Theme messages: only when the message's scope tag matches the receiver.
- * - Scheme messages on an independent-scheme receiver: only when the scope
- *   tag matches the receiver (other independent scopes are ignored).
- * - Scheme messages on a shared-scheme receiver: only when tagged
- *   `@shared` (other scopes' independent scheme changes are ignored).
+ * Should this scope act on an incoming sync message?
+ * - theme: scope tag matches the receiver (axis validity checked by the handler).
+ * - scheme + independent receiver: scope tag matches.
+ * - scheme + shared receiver: tagged `@shared`.
  */
 export function shouldHandleSyncMessage(
 	receiver: { name: string; independentScheme: boolean },
@@ -94,24 +89,243 @@ function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export class ThemeScope {
-	readonly config: ThemeScopeConfig;
+// ---------------------------------------------------------------------------
+// ThemeAxis — one axis's reactive theme state + <style> element + cookie
+// ---------------------------------------------------------------------------
+
+export class ThemeAxis {
+	readonly config: AxisConfig;
 
 	themeState = $state<string | null>(null);
 	themeCookieValue = $state<string | null>(null);
-	darkState = $state<boolean | null>(null);
-	schemeCookieValue = $state<SchemeCookieValue>(null);
 	pendingLoads = $state<number>(0);
 	loadingName = $state<string | null>(null);
 
 	#latestCall = 0;
+
+	constructor(config: AxisConfig) {
+		this.config = config;
+	}
+
+	has(name: string): boolean {
+		return Object.hasOwn(this.config.themes, name);
+	}
+
+	names(): string[] {
+		return Object.keys(this.config.themes);
+	}
+
+	#cacheKey(name: string): string {
+		return `${this.config.cacheKeyPrefix}/${name}`;
+	}
+
+	#readCookie(): string | null {
+		const re = new RegExp(`(?:^|;\\s*)${regexEscape(this.config.cookieName)}=([^;]*)`);
+		const m = document.cookie.match(re);
+		if (!m) return null;
+		const v = decodeURIComponent(m[1]);
+		return this.has(v) ? v : null;
+	}
+
+	#setCookie(value: string): void {
+		const secure = location.protocol === 'https:' ? '; Secure' : '';
+		document.cookie = `${this.config.cookieName}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
+	}
+
+	#applyCss(css: string): void {
+		let style = document.getElementById(this.config.styleId) as HTMLStyleElement | null;
+		if (!style) {
+			style = document.createElement('style');
+			style.id = this.config.styleId;
+			document.head.appendChild(style);
+		}
+		style.textContent = css;
+	}
+
+	removeStyleEl(): void {
+		document.getElementById(this.config.styleId)?.remove();
+	}
+
+	/** Theme this axis should be on, from its cookie (if valid) or its default. */
+	resolveTarget(): string {
+		if (typeof document === 'undefined') return this.config.defaultTheme;
+		return this.#readCookie() ?? this.config.defaultTheme;
+	}
+
+	/** Seed reactive state from the cookie only — no DOM, no listeners. Browser-only. */
+	seedFromCookie(): void {
+		if (typeof document === 'undefined') return;
+		this.themeCookieValue = this.#readCookie();
+		this.themeState = this.themeCookieValue ?? this.config.defaultTheme;
+	}
+
+	/** Whether this axis's `<style>` element already has content (SSR-injected). */
+	hasRenderedCss(): boolean {
+		if (typeof document === 'undefined') return false;
+		const el = document.getElementById(this.config.styleId);
+		return !!el && !!el.textContent;
+	}
+
+	getCurrent(): string {
+		if (typeof document === 'undefined') {
+			return getServerTheme()?.themes[this.config.name]?.name ?? this.config.defaultTheme;
+		}
+		return this.themeState ?? this.config.defaultTheme;
+	}
+
+	getSource(): 'cookie' | 'default' {
+		if (typeof document === 'undefined') {
+			return getServerTheme()?.themes[this.config.name]?.source ?? 'default';
+		}
+		return this.themeCookieValue === null ? 'default' : 'cookie';
+	}
+
+	isLoading(): boolean {
+		return this.pendingLoads > 0;
+	}
+
+	/** Load + apply a theme. Writes the cookie when `writeCookie` (user action). */
+	async apply(name: string, writeCookie: boolean): Promise<void> {
+		const callId = ++this.#latestCall;
+		this.pendingLoads++;
+		this.loadingName = name;
+		try {
+			const css = await loadCss(this.#cacheKey(name), this.config.themes[name]);
+			if (callId !== this.#latestCall) return;
+			this.#applyCss(css);
+			if (writeCookie) {
+				this.#setCookie(name);
+				this.themeCookieValue = name;
+			}
+			this.themeState = name;
+		} finally {
+			this.pendingLoads--;
+			if (callId === this.#latestCall) this.loadingName = null;
+		}
+	}
+
+	/** Apply the axis's current target (cookie or default) without writing a cookie. */
+	async applyFromCookie(): Promise<void> {
+		if (typeof document === 'undefined') return;
+		const cookie = this.#readCookie();
+		const target = cookie ?? this.config.defaultTheme;
+		const callId = ++this.#latestCall;
+		this.pendingLoads++;
+		this.loadingName = target;
+		try {
+			const css = await loadCss(this.#cacheKey(target), this.config.themes[target]);
+			if (callId !== this.#latestCall) return;
+			this.#applyCss(css);
+			this.themeCookieValue = cookie;
+			this.themeState = target;
+		} finally {
+			this.pendingLoads--;
+			if (callId === this.#latestCall) this.loadingName = null;
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ThemeScope — a set of axes + scheme state + cross-tab/listener wiring
+// ---------------------------------------------------------------------------
+
+export class ThemeScope {
+	readonly config: ThemeScopeConfig;
+	readonly #axes: Map<string, ThemeAxis>;
+
+	darkState = $state<boolean | null>(null);
+	schemeCookieValue = $state<SchemeCookieValue>(null);
+
 	#bc: BroadcastChannel | null = null;
 	#mql: MediaQueryList | null = null;
 	#mqlListener: ((e: MediaQueryListEvent) => void) | null = null;
 
 	constructor(config: ThemeScopeConfig) {
 		this.config = config;
+		this.#axes = new Map(config.axes.map((a) => [a.name, new ThemeAxis(a)]));
 	}
+
+	get axes(): Map<string, ThemeAxis> {
+		return this.#axes;
+	}
+
+	#defaultAxis(): ThemeAxis {
+		// Flat scope has exactly one axis.
+		return this.#axes.values().next().value as ThemeAxis;
+	}
+
+	#axisOwning(name: string): ThemeAxis | undefined {
+		for (const axis of this.#axes.values()) {
+			if (axis.has(name)) return axis;
+		}
+		return undefined;
+	}
+
+	// --- theme reads (flat → scalar, axed → per-axis object) ----------------
+
+	getThemes(): string[] | Record<string, string[]> {
+		if (this.config.flat) return this.#defaultAxis().names();
+		const out: Record<string, string[]> = {};
+		for (const [name, axis] of this.#axes) out[name] = axis.names();
+		return out;
+	}
+
+	getCurrentTheme(): string | Record<string, string> {
+		if (this.config.flat) return this.#defaultAxis().getCurrent();
+		const out: Record<string, string> = {};
+		for (const [name, axis] of this.#axes) out[name] = axis.getCurrent();
+		return out;
+	}
+
+	getDefaultTheme(): string | Record<string, string> {
+		if (this.config.flat) return this.#defaultAxis().config.defaultTheme;
+		const out: Record<string, string> = {};
+		for (const [name, axis] of this.#axes) out[name] = axis.config.defaultTheme;
+		return out;
+	}
+
+	getThemeSource(): ('cookie' | 'default') | Record<string, 'cookie' | 'default'> {
+		if (this.config.flat) return this.#defaultAxis().getSource();
+		const out: Record<string, 'cookie' | 'default'> = {};
+		for (const [name, axis] of this.#axes) out[name] = axis.getSource();
+		return out;
+	}
+
+	isLoadingTheme(name?: string): boolean {
+		if (name === undefined) {
+			for (const axis of this.#axes.values()) if (axis.isLoading()) return true;
+			return false;
+		}
+		const axis = this.#axisOwning(name);
+		return axis ? axis.loadingName === name : false;
+	}
+
+	getLoadingTheme(): string | null | Record<string, string> {
+		if (this.config.flat) return this.#defaultAxis().loadingName;
+		const out: Record<string, string> = {};
+		for (const [name, axis] of this.#axes) {
+			if (axis.loadingName !== null) out[name] = axis.loadingName;
+		}
+		return out;
+	}
+
+	// --- theme writes -------------------------------------------------------
+
+	async setTheme(name: string, scheme?: Scheme): Promise<void> {
+		if (typeof document === 'undefined') return;
+		const axis = this.#axisOwning(name);
+		if (!axis) throw new Error(`Unknown theme: ${name}`);
+		await axis.apply(name, true);
+		this.#bc?.postMessage(
+			buildSyncMessage('theme', this.config.name, this.config.independentScheme, {
+				axis: axis.config.name,
+				name
+			})
+		);
+		if (scheme !== undefined) this.setScheme(scheme);
+	}
+
+	// --- scheme (unchanged semantics; state lives on the scope) -------------
 
 	#readSchemeCookie(): SchemeCookieValue {
 		const re = new RegExp(`(?:^|;\\s*)${regexEscape(this.config.cookieScheme)}=([^;]*)`);
@@ -122,30 +336,9 @@ export class ThemeScope {
 		return null;
 	}
 
-	#readThemeCookie(): string | null {
-		const cfg = this.config;
-		const re = new RegExp(`(?:^|;\\s*)${regexEscape(cfg.cookieTheme)}=([^;]*)`);
-		const m = document.cookie.match(re);
-		if (!m) return null;
-		const v = decodeURIComponent(m[1]);
-		return Object.hasOwn(cfg.themes, v) ? v : null;
-	}
-
-	#setCookie(name: string, value: string): void {
+	#setSchemeCookie(value: string): void {
 		const secure = location.protocol === 'https:' ? '; Secure' : '';
-		document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
-	}
-
-	#applyTheme(name: string, css: string): void {
-		let style = document.getElementById('svelte-themes') as HTMLStyleElement | null;
-		if (!style) {
-			style = document.createElement('style');
-			style.id = 'svelte-themes';
-			document.head.appendChild(style);
-		}
-		style.textContent = css;
-		document.documentElement.dataset.theme = name;
-		this.themeState = name;
+		document.cookie = `${this.config.cookieScheme}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax${secure}`;
 	}
 
 	#applyDark(dark: boolean): void {
@@ -153,163 +346,45 @@ export class ThemeScope {
 		this.darkState = dark;
 	}
 
-	/**
-	 * Resolve the theme this scope should currently be on, based on its own
-	 * theme cookie (if valid) or its `defaultTheme`. Browser-only — the cookie
-	 * read needs `document`.
-	 */
-	resolveTargetThemeFromCookie(): string {
-		if (typeof document === 'undefined') return this.config.defaultTheme;
-		const fromCookie = this.#readThemeCookie();
-		return fromCookie ?? this.config.defaultTheme;
-	}
-
-	/**
-	 * Seed this scope's reactive state from its cookies only — no DOM listeners
-	 * bound, no `<style>` content touched. Used for non-active scopes at init
-	 * so their handle (`themes.foo.getCurrentTheme()`) returns *their* state,
-	 * not whatever the active scope rendered into the DOM.
-	 */
-	seedStateFromCookies(): void {
-		if (typeof document === 'undefined') return;
-		const cfg = this.config;
-		this.themeCookieValue = this.#readThemeCookie();
-		this.themeState = this.themeCookieValue ?? cfg.defaultTheme;
+	#seedSchemeFromCookie(): void {
 		this.schemeCookieValue = this.#readSchemeCookie();
-		const schemeCookie = this.schemeCookieValue;
-		if (schemeCookie === 'dark') {
-			this.darkState = true;
-		} else if (schemeCookie === 'light') {
-			this.darkState = false;
-		} else if (schemeCookie === 'system') {
+		const c = this.schemeCookieValue;
+		if (c === 'dark') this.darkState = true;
+		else if (c === 'light') this.darkState = false;
+		else if (c === 'system') this.darkState = matchMedia('(prefers-color-scheme: dark)').matches;
+		else if (this.config.defaultScheme === 'system')
 			this.darkState = matchMedia('(prefers-color-scheme: dark)').matches;
-		} else if (cfg.defaultScheme === 'system') {
-			this.darkState = matchMedia('(prefers-color-scheme: dark)').matches;
-		} else {
-			this.darkState = cfg.defaultScheme === 'dark';
-		}
+		else this.darkState = this.config.defaultScheme === 'dark';
 	}
 
-	/**
-	 * Re-read this scope's cookies and apply its target state atomically.
-	 * Used by the cross-scope navigation hook to swap themes without a flash:
-	 * the current theme stays rendered while the new CSS loads, then `<style>`
-	 * content, `data-theme`, and (if this scope owns its scheme) the `dark`
-	 * class swap together.
-	 */
-	async applyScopeStateFromCookies(): Promise<void> {
-		if (typeof document === 'undefined') return;
-		const cfg = this.config;
-
-		const targetTheme = this.resolveTargetThemeFromCookie();
-		const cookieValue = this.#readThemeCookie();
-
-		// Pre-load CSS while the current theme stays visible, then apply
-		// atomically — the no-flash guarantee.
-		const callId = ++this.#latestCall;
-		this.pendingLoads++;
-		this.loadingName = targetTheme;
-		try {
-			const css = await loadCss(targetTheme);
-			if (callId !== this.#latestCall) return;
-
-			this.#applyTheme(targetTheme, css);
-			this.themeCookieValue = cookieValue;
-
-			const schemeCookie = this.#readSchemeCookie();
-			this.schemeCookieValue = schemeCookie;
-			if (schemeCookie === 'system') {
-				this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
-			} else if (schemeCookie === 'dark') {
-				this.#applyDark(true);
-			} else if (schemeCookie === 'light') {
-				this.#applyDark(false);
-			} else if (cfg.defaultScheme === 'system') {
-				this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
-			} else {
-				this.#applyDark(cfg.defaultScheme === 'dark');
-			}
-		} finally {
-			this.pendingLoads--;
-			if (callId === this.#latestCall) this.loadingName = null;
-		}
-	}
-
-	getThemes(): string[] {
-		return Object.keys(this.config.themes);
-	}
-
-	getCurrentTheme(): string {
-		if (typeof document === 'undefined') {
-			return getServerTheme()?.theme ?? this.config.defaultTheme;
-		}
-		return this.themeState ?? document.documentElement.dataset.theme ?? this.config.defaultTheme;
-	}
-
-	getDefaultTheme(): string {
-		return this.config.defaultTheme;
-	}
-
-	getThemeSource(): 'cookie' | 'default' {
-		if (typeof document === 'undefined') {
-			return getServerTheme()?.themeSource ?? 'default';
-		}
-		return this.themeCookieValue === null ? 'default' : 'cookie';
-	}
-
-	async setTheme(name: string, scheme?: Scheme): Promise<void> {
-		if (typeof document === 'undefined') return;
-		const cfg = this.config;
-		if (!Object.hasOwn(cfg.themes, name)) {
-			throw new Error(`Unknown theme: ${name}`);
-		}
-		const callId = ++this.#latestCall;
-		this.pendingLoads++;
-		this.loadingName = name;
-		try {
-			const css = await loadCss(name);
-			if (callId !== this.#latestCall) return;
-			this.#applyTheme(name, css);
-			this.#setCookie(cfg.cookieTheme, name);
-			this.themeCookieValue = name;
-			this.#bc?.postMessage(
-				buildSyncMessage('theme', cfg.name, cfg.independentScheme, { name })
-			);
-			if (scheme !== undefined) this.setScheme(scheme);
-		} finally {
-			this.pendingLoads--;
-			if (callId === this.#latestCall) this.loadingName = null;
-		}
-	}
-
-	isLoadingTheme(name?: string): boolean {
-		if (name === undefined) return this.pendingLoads > 0;
-		return this.loadingName === name;
-	}
-
-	getLoadingTheme(): string | null {
-		return this.loadingName;
+	#applySchemeFromCookie(): void {
+		this.schemeCookieValue = this.#readSchemeCookie();
+		const c = this.schemeCookieValue;
+		if (c === 'system') this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
+		else if (c === 'dark') this.#applyDark(true);
+		else if (c === 'light') this.#applyDark(false);
+		else if (this.config.defaultScheme === 'system')
+			this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
+		else this.#applyDark(this.config.defaultScheme === 'dark');
 	}
 
 	isDark(): boolean {
 		if (typeof document === 'undefined') {
 			const ss = getServerTheme();
 			if (ss) return ss.dark;
-			const ds = this.config.defaultScheme;
-			return ds === 'dark';
+			return this.config.defaultScheme === 'dark';
 		}
 		return this.darkState ?? document.documentElement.classList.contains('dark');
 	}
 
 	getScheme(): Scheme {
-		const cfg = this.config;
 		if (typeof document === 'undefined') {
 			const ss = getServerTheme();
 			if (ss) return ss.scheme;
-			return cfg.defaultScheme;
+			return this.config.defaultScheme;
 		}
 		if (this.schemeCookieValue !== null) return this.schemeCookieValue;
-		return cfg.defaultScheme;
+		return this.config.defaultScheme;
 	}
 
 	getDefaultScheme(): Scheme {
@@ -325,21 +400,17 @@ export class ThemeScope {
 
 	setScheme(scheme: Scheme): void {
 		if (typeof document === 'undefined') return;
-		const cfg = this.config;
 		if (scheme === 'system') {
-			this.#setCookie(cfg.cookieScheme, 'system');
+			this.#setSchemeCookie('system');
 			this.schemeCookieValue = 'system';
 			this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
-			this.#bc?.postMessage(
-				buildSyncMessage('scheme', cfg.name, cfg.independentScheme, { scheme: 'system' })
-			);
-			return;
+		} else {
+			this.#applyDark(scheme === 'dark');
+			this.#setSchemeCookie(scheme);
+			this.schemeCookieValue = scheme;
 		}
-		this.#applyDark(scheme === 'dark');
-		this.#setCookie(cfg.cookieScheme, scheme);
-		this.schemeCookieValue = scheme;
 		this.#bc?.postMessage(
-			buildSyncMessage('scheme', cfg.name, cfg.independentScheme, { scheme })
+			buildSyncMessage('scheme', this.config.name, this.config.independentScheme, { scheme })
 		);
 	}
 
@@ -347,18 +418,60 @@ export class ThemeScope {
 		this.setScheme(this.isDark() ? 'light' : 'dark');
 	}
 
+	// --- lifecycle ----------------------------------------------------------
+
+	/** Seed all axes' + scheme state from cookies (no DOM apply, no listeners). */
+	seedStateFromCookies(): void {
+		if (typeof document === 'undefined') return;
+		for (const axis of this.#axes.values()) axis.seedFromCookie();
+		this.#seedSchemeFromCookie();
+	}
+
 	/**
-	 * Tear down any DOM/BC listeners this scope owns. Called when the active
-	 * scope changes on cross-scope SPA navigation — without it, the previous
-	 * scope's `matchMedia` listener would keep firing and could clobber the
-	 * new active scope's `dark` class (for independent-scheme apps).
+	 * Re-read cookies and apply this scope's full state to the DOM atomically:
+	 * each axis's CSS + the `dark` class. Used on cross-scope navigation —
+	 * loads run first, the current frame stays visible until applied.
 	 */
-	disposeClient(): void {
-		if (this.#mql && this.#mqlListener) {
-			this.#mql.removeEventListener('change', this.#mqlListener);
+	async applyStateFromCookies(): Promise<void> {
+		if (typeof document === 'undefined') return;
+		await Promise.all([...this.#axes.values()].map((a) => a.applyFromCookie()));
+		this.#applySchemeFromCookie();
+	}
+
+	#bcMessage = (e: MessageEvent): void => {
+		const msg = e.data as SyncMessage | null;
+		if (!msg || typeof msg !== 'object' || typeof msg.scope !== 'string') return;
+		if (
+			!shouldHandleSyncMessage(
+				{ name: this.config.name, independentScheme: this.config.independentScheme },
+				msg
+			)
+		) {
+			return;
 		}
+		if (msg.kind === 'scheme') {
+			if (msg.scheme === 'system') {
+				this.schemeCookieValue = 'system';
+				this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
+			} else if (msg.scheme === 'light' || msg.scheme === 'dark') {
+				this.schemeCookieValue = msg.scheme;
+				this.#applyDark(msg.scheme === 'dark');
+			}
+			return;
+		}
+		const axis = this.#axes.get(msg.axis);
+		if (axis && axis.has(msg.name)) {
+			axis.apply(msg.name, false).catch((err) => {
+				console.error('[svelte-themes] failed to apply broadcast theme:', err);
+			});
+		}
+	};
+
+	disposeClient(): void {
+		if (this.#mql && this.#mqlListener) this.#mql.removeEventListener('change', this.#mqlListener);
 		this.#mql = null;
 		this.#mqlListener = null;
+		this.#bc?.removeEventListener('message', this.#bcMessage);
 		this.#bc?.close();
 		this.#bc = null;
 	}
@@ -369,85 +482,40 @@ export class ThemeScope {
 		this.disposeClient();
 		this.seedStateFromCookies();
 
-		const cfg = this.config;
+		// Apply any axis whose <style> wasn't server-injected (e.g. axed mode
+		// before the server injects per-axis CSS). Flat mode's element is already
+		// filled by SSR, so this is skipped there — no redundant load, no flash.
+		for (const axis of this.#axes.values()) {
+			if (!axis.hasRenderedCss()) void axis.applyFromCookie();
+		}
 
 		this.#mql = matchMedia('(prefers-color-scheme: dark)');
 		this.#mqlListener = (e) => {
-			const v = this.#readSchemeCookie();
-			if (v === 'system' || (v === null && this.config.defaultScheme === 'system')) {
+			const c = this.#readSchemeCookie();
+			if (c === 'system' || (c === null && this.config.defaultScheme === 'system')) {
 				this.#applyDark(e.matches);
 			}
 		};
 		this.#mql.addEventListener('change', this.#mqlListener);
 
-		if (cfg.syncTabs) {
-			this.#bc = new BroadcastChannel(cfg.syncChannel);
-			this.#bc.addEventListener('message', (e) => {
-				const msg = e.data as SyncMessage | null;
-				if (!msg || typeof msg !== 'object') return;
-				if (typeof msg.scope !== 'string') return;
-				if (
-					!shouldHandleSyncMessage(
-						{ name: this.config.name, independentScheme: this.config.independentScheme },
-						msg
-					)
-				) {
-					return;
-				}
-				if (msg.kind === 'scheme') {
-					if (msg.scheme === 'system') {
-						this.schemeCookieValue = 'system';
-						this.#applyDark(matchMedia('(prefers-color-scheme: dark)').matches);
-						return;
-					}
-					if (msg.scheme === 'light' || msg.scheme === 'dark') {
-						this.schemeCookieValue = msg.scheme;
-						this.#applyDark(msg.scheme === 'dark');
-						return;
-					}
-				}
-				if (
-					msg.kind === 'theme' &&
-					typeof msg.name === 'string' &&
-					Object.hasOwn(this.config.themes, msg.name)
-				) {
-					const name = msg.name;
-					const callId = ++this.#latestCall;
-					this.pendingLoads++;
-					this.loadingName = name;
-					loadCss(name)
-						.then((css) => {
-							if (callId !== this.#latestCall) return;
-							this.#applyTheme(name, css);
-							this.themeCookieValue = name;
-						})
-						.catch((err) => {
-							console.error('[svelte-themes] failed to apply broadcast theme:', err);
-						})
-						.finally(() => {
-							this.pendingLoads--;
-							if (callId === this.#latestCall) this.loadingName = null;
-						});
-				}
-			});
+		if (this.config.syncTabs) {
+			this.#bc = new BroadcastChannel(this.config.syncChannel);
+			this.#bc.addEventListener('message', this.#bcMessage);
 		}
 
 		if (import.meta.hot) {
-			import.meta.hot.dispose(() => {
-				if (this.#mql && this.#mqlListener) {
-					this.#mql.removeEventListener('change', this.#mqlListener);
-				}
-				this.#bc?.close();
-			});
+			import.meta.hot.dispose(() => this.disposeClient());
 		}
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Registry + scope matching
+// ---------------------------------------------------------------------------
+
 export const registry: Map<string, ThemeScope> = new Map();
 export const matchers: Map<string, Matcher> = new Map();
 
-// Tracks which scope was last applied to the DOM. Used by
-// `applyActiveScopeOnNavigation` to detect scope changes.
 let lastActiveScopeName: string | null = null;
 
 export function registerScope(scope: ThemeScope): void {
@@ -456,10 +524,6 @@ export function registerScope(scope: ThemeScope): void {
 
 export function registerScopeMatcher(name: string, matcher: Matcher): void {
 	matchers.set(name, matcher);
-}
-
-export function clearMatchers(): void {
-	matchers.clear();
 }
 
 export function getScope(name: string): ThemeScope | undefined {
@@ -472,13 +536,7 @@ export function getFirstScope(): ThemeScope | undefined {
 }
 
 export function clearRegistry(): void {
-	// Dispose any client-side listeners (mql + BroadcastChannel) held by the
-	// scopes we're about to drop. Without this, calling `createThemes` /
-	// `createScopedThemes` more than once would leak listeners — the stale
-	// scope's BC would still receive messages and mutate the DOM.
-	for (const scope of registry.values()) {
-		scope.disposeClient();
-	}
+	for (const scope of registry.values()) scope.disposeClient();
 	registry.clear();
 	matchers.clear();
 	lastActiveScopeName = null;
@@ -490,8 +548,7 @@ function splitSegments(pathname: string): string[] {
 
 function stringPrefixMatchLength(pattern: string, segments: string[]): number {
 	const patternSegs = splitSegments(pattern);
-	// Special case: pattern '/' matches every path with prefix length 0 (root catch-all).
-	if (patternSegs.length === 0) return 0;
+	if (patternSegs.length === 0) return 0; // '/' — root catch-all, length 0
 	if (patternSegs.length > segments.length) return -1;
 	for (let i = 0; i < patternSegs.length; i++) {
 		if (patternSegs[i] !== segments[i]) return -1;
@@ -500,12 +557,10 @@ function stringPrefixMatchLength(pattern: string, segments: string[]): number {
 }
 
 /**
- * Match a pathname against the registered scope matchers.
- *
- * Resolution order:
- *  1. Best (longest) prefix match across string/array matchers.
- *  2. If no prefix match, first predicate matcher in declaration order.
- *  3. Otherwise `undefined` — caller falls back to the first scope.
+ * Match a pathname against registered scope matchers.
+ *  1. Longest prefix wins across string/array matchers (first declared on ties).
+ *  2. Else first predicate matcher in declaration order.
+ *  3. Else `undefined` — caller falls back to the first scope.
  */
 export function matchScope(pathname: string): ThemeScope | undefined {
 	const segments = splitSegments(pathname);
@@ -523,20 +578,16 @@ export function matchScope(pathname: string): ThemeScope | undefined {
 		let scopeBest = -1;
 		for (const p of patterns) {
 			const len = stringPrefixMatchLength(p, segments);
-			if (len < 0) continue;
 			if (len > scopeBest) scopeBest = len;
 		}
 		if (scopeBest < 0) continue;
-		// Strict greater — first declared wins on ties.
 		if (scopeBest > bestLen) {
 			bestLen = scopeBest;
 			bestName = name;
 		}
 	}
 
-	if (bestName !== undefined) {
-		return registry.get(bestName);
-	}
+	if (bestName !== undefined) return registry.get(bestName);
 
 	if (predicates.length > 0) {
 		let url: URL | undefined;
@@ -548,9 +599,7 @@ export function matchScope(pathname: string): ThemeScope | undefined {
 		if (url) {
 			for (const name of predicates) {
 				const m = matchers.get(name);
-				if (typeof m === 'function' && m(url)) {
-					return registry.get(name);
-				}
+				if (typeof m === 'function' && m(url)) return registry.get(name);
 			}
 		}
 	}
@@ -567,16 +616,13 @@ export function getActiveScope(): ThemeScope | undefined {
 		}
 		return getFirstScope();
 	}
-	const matched = matchScope(window.location.pathname);
-	if (matched) return matched;
-	return getFirstScope();
+	return matchScope(window.location.pathname) ?? getFirstScope();
 }
 
 // ---------------------------------------------------------------------------
 // Cross-scope SPA navigation
 // ---------------------------------------------------------------------------
 
-/** Reset for tests / fresh `createScopedThemes` calls. */
 export function setLastActiveScopeName(name: string | null): void {
 	lastActiveScopeName = name;
 }
@@ -585,13 +631,6 @@ export function getLastActiveScopeName(): string | null {
 	return lastActiveScopeName;
 }
 
-/**
- * Pure decision helper: should this navigation trigger a cross-scope swap?
- *
- * Returns `true` only when the next scope is known *and* differs from the
- * previous scope. Used by `applyActiveScopeOnNavigation` so the same logic is
- * trivially unit-testable.
- */
 export function shouldSwapOnNavigation(
 	prevScopeName: string | null,
 	nextScopeName: string | undefined | null
@@ -601,16 +640,13 @@ export function shouldSwapOnNavigation(
 }
 
 /**
- * Match `pathname` against the registered scopes and, if the active scope
- * changed since last call, atomically swap themes (and scheme, for
- * independent-scheme scopes) to the new scope's state.
- *
- * Designed to be wired to SvelteKit's `afterNavigate`. No-op when no scopes
- * are registered or when the scope hasn't changed.
+ * On cross-scope navigation: hand off the whole active scope. Dispose the old
+ * scope's listeners, diff its axis `<style>` elements against the new scope's
+ * (remove the ones the new scope doesn't have — shared ids are reused and
+ * updated by `applyStateFromCookies`), apply the new scope's state (axes +
+ * scheme) atomically, then bind the new scope's listeners.
  */
-export async function applyActiveScopeOnNavigation(
-	pathname: string
-): Promise<void> {
+export async function applyActiveScopeOnNavigation(pathname: string): Promise<void> {
 	const next = matchScope(pathname) ?? getFirstScope();
 	const nextName = next?.config.name;
 	if (!shouldSwapOnNavigation(lastActiveScopeName, nextName)) return;
@@ -618,41 +654,20 @@ export async function applyActiveScopeOnNavigation(
 	const previousName = lastActiveScopeName;
 	lastActiveScopeName = nextName!;
 
-	// Hand off DOM/BC listeners from old to new. The old scope's mql listener
-	// would otherwise keep mutating the global `dark` class based on its own
-	// scheme cookie, conflicting with the new active scope.
 	if (previousName) {
 		const previous = registry.get(previousName);
-		if (previous && previous !== next) previous.disposeClient();
+		if (previous && previous !== next) {
+			previous.disposeClient();
+			// Remove style elements for axes the new scope doesn't have.
+			const nextIds = new Set([...next!.axes.values()].map((a) => a.config.styleId));
+			for (const axis of previous.axes.values()) {
+				if (!nextIds.has(axis.config.styleId)) axis.removeStyleEl();
+			}
+		}
 	}
 
-	// Atomic theme swap (await-loadCss-then-apply) keeps the previous frame
-	// visible until the new CSS is in hand — same no-flash guarantee as `setTheme`.
-	await next!.applyScopeStateFromCookies();
+	await next!.applyStateFromCookies();
 
-	// Bind the new active scope's listeners — *only* if it's still active.
-	// A rapid cross-scope navigation can change `lastActiveScopeName` while
-	// our await is suspended; without this guard we'd bind listeners to a
-	// scope that's no longer the active one.
-	if (lastActiveScopeName === nextName) {
-		next!.initClient();
-	}
-}
-
-/**
- * Pure helper: enumerate the `(scopeName, themeName)` pairs whose CSS should
- * be speculatively preloaded after init. Skips the primary scope (already
- * applied). Browser-only consumers feed the result into `loadCss` on
- * `requestIdleCallback`.
- */
-export function idlePreloadCandidates(
-	scopes: Map<string, ThemeScope>,
-	primaryScopeName: string
-): Array<{ scopeName: string; themeName: string }> {
-	const out: Array<{ scopeName: string; themeName: string }> = [];
-	for (const [name, scope] of scopes) {
-		if (name === primaryScopeName) continue;
-		out.push({ scopeName: name, themeName: scope.resolveTargetThemeFromCookie() });
-	}
-	return out;
+	// Guard against a rapid second navigation having moved on while we awaited.
+	if (lastActiveScopeName === nextName) next!.initClient();
 }

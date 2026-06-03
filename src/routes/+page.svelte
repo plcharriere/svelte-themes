@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { getCurrentTheme } from '../themes';
-	import { getThemeSource, isDark, getScheme, getSchemeSource } from '$lib';
+	import { getCurrentTheme, getThemeSource } from '../themes';
+	import { isDark, getScheme, getSchemeSource } from '$lib';
 </script>
 
 <div class="max-w-5xl space-y-8">
@@ -8,10 +8,18 @@
 		class="bg-card text-card-foreground border border-border rounded-lg px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm"
 	>
 		<div class="flex items-center gap-2">
-			<span class="text-muted-foreground text-xs uppercase tracking-wider">Theme</span>
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Palette</span>
 			<code class="font-mono">
-				{getCurrentTheme()}
-				<span class="text-muted-foreground">({getThemeSource()})</span>
+				{getCurrentTheme().palette}
+				<span class="text-muted-foreground">({getThemeSource().palette})</span>
+			</code>
+		</div>
+		<div class="h-4 w-px bg-border"></div>
+		<div class="flex items-center gap-2">
+			<span class="text-muted-foreground text-xs uppercase tracking-wider">Radius</span>
+			<code class="font-mono">
+				{getCurrentTheme().radius}
+				<span class="text-muted-foreground">({getThemeSource().radius})</span>
 			</code>
 		</div>
 		<div class="h-4 w-px bg-border"></div>

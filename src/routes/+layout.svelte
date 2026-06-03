@@ -8,7 +8,9 @@
 
 	let { children } = $props();
 
-	const themes = getThemes();
+	const allThemes = getThemes();
+	const paletteThemes = allThemes.palette;
+	const radiusThemes = allThemes.radius;
 	let sidebarOpen = $state(false);
 
 	function prettify(name: string): string {
@@ -101,14 +103,14 @@
 	>
 		<div>
 			<h1 class="font-serif text-xl font-bold break-words">@plcharriere/svelte-themes</h1>
-			<p class="text-muted-foreground mt-1 text-xs">Pick a theme below.</p>
+			<p class="text-muted-foreground mt-1 text-xs">Two axes — palette × radius — compose live.</p>
 		</div>
 
 		<div class="flex flex-col gap-2 flex-1 min-h-0">
-			<p class="text-muted-foreground text-xs uppercase tracking-wider">Themes</p>
+			<p class="text-muted-foreground text-xs uppercase tracking-wider">Palette</p>
 			<div class="flex-1 min-h-0 overflow-y-auto space-y-1 -mr-3 pr-3">
-				{#each themes as name (name)}
-					{@const active = page.url.pathname === '/' && getCurrentTheme() === name}
+				{#each paletteThemes as name (name)}
+					{@const active = page.url.pathname === '/' && getCurrentTheme().palette === name}
 					{@const loading = isLoadingTheme(name)}
 					<button
 						type="button"
@@ -132,6 +134,25 @@
 								<path d="M12 2 a10 10 0 0 1 10 10" stroke-linecap="round" />
 							</svg>
 						{/if}
+					</button>
+				{/each}
+			</div>
+		</div>
+
+		<div class="flex flex-col gap-2">
+			<p class="text-muted-foreground text-xs uppercase tracking-wider">Radius</p>
+			<div class="flex gap-1 rounded-md bg-secondary p-1">
+				{#each radiusThemes as name (name)}
+					{@const active = getCurrentTheme().radius === name}
+					<button
+						type="button"
+						onclick={(e) => pickTheme(e, name)}
+						aria-pressed={active}
+						class="flex-1 rounded px-2 py-1 text-xs capitalize cursor-pointer transition {active
+							? 'bg-primary text-primary-foreground'
+							: 'text-secondary-foreground hover:bg-accent hover:text-accent-foreground'}"
+					>
+						{name}
 					</button>
 				{/each}
 			</div>
