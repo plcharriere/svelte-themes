@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	applyActiveScopeOnNavigation,
@@ -120,5 +120,60 @@ describe('applyActiveScopeOnNavigation — scope tracking', () => {
 		setLastActiveScopeName('something');
 		clearRegistry();
 		expect(getLastActiveScopeName()).toBeNull();
+	});
+
+	it('serializes overlapping navigations — each apply completes before the next starts', async () => {
+		const landing = makeScope('landing');
+		const admin = makeScope('admin');
+		registerScope(landing);
+		registerScopeMatcher('landing', '/');
+		registerScope(admin);
+		registerScopeMatcher('admin', '/admin');
+		setLastActiveScopeName('landing');
+
+		// Wrap each scope's apply so we can observe ordering. The inner
+		// `await` yields a microtask — if navigations ran concurrently the
+		// two applies would interleave (start:admin, start:landing, …).
+		const events: string[] = [];
+		const wrap = (scope: ThemeScope, label: string) => {
+			const orig = scope.applyStateFromCookies.bind(scope);
+			scope.applyStateFromCookies = async () => {
+				events.push(`start:${label}`);
+				await Promise.resolve();
+				await orig();
+				events.push(`end:${label}`);
+			};
+		};
+		wrap(landing, 'landing');
+		wrap(admin, 'admin');
+
+		// Fire two overlapping cross-scope navigations without awaiting between.
+		const p1 = applyActiveScopeOnNavigation('/admin'); // landing → admin
+		const p2 = applyActiveScopeOnNavigation('/'); // admin → landing
+		await Promise.all([p1, p2]);
+
+		expect(events).toEqual(['start:admin', 'end:admin', 'start:landing', 'end:landing']);
+		expect(getLastActiveScopeName()).toBe('landing');
+	});
+
+	it('a failed navigation apply does not poison the chain', async () => {
+		const landing = makeScope('landing');
+		const admin = makeScope('admin');
+		registerScope(landing);
+		registerScopeMatcher('landing', '/');
+		registerScope(admin);
+		registerScopeMatcher('admin', '/admin');
+		setLastActiveScopeName('landing');
+
+		// First navigation's apply rejects; the chain must still process the next.
+		admin.applyStateFromCookies = () => Promise.reject(new Error('boom'));
+		const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const p1 = applyActiveScopeOnNavigation('/admin'); // rejects internally
+		const p2 = applyActiveScopeOnNavigation('/'); // must still run
+		await Promise.all([p1, p2]);
+
+		expect(getLastActiveScopeName()).toBe('landing');
+		errSpy.mockRestore();
 	});
 });

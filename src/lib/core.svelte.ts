@@ -146,12 +146,6 @@ export class ThemeAxis {
 		document.getElementById(this.config.styleId)?.remove();
 	}
 
-	/** Theme this axis should be on, from its cookie (if valid) or its default. */
-	resolveTarget(): string {
-		if (typeof document === 'undefined') return this.config.defaultTheme;
-		return this.#readCookie() ?? this.config.defaultTheme;
-	}
-
 	/** Seed reactive state from the cookie only — no DOM, no listeners. Browser-only. */
 	seedFromCookie(): void {
 		if (typeof document === 'undefined') return;
@@ -184,7 +178,12 @@ export class ThemeAxis {
 		return this.pendingLoads > 0;
 	}
 
-	/** Load + apply a theme. Writes the cookie when `writeCookie` (user action). */
+	/**
+	 * Load + apply a theme. Writes the cookie when `writeCookie` (a user action);
+	 * for a broadcast (`writeCookie === false`) the cookie was already written by
+	 * the originating tab. Either way the cookie ends up holding `name`, so
+	 * `themeCookieValue` (which drives `getThemeSource`) is set in both cases.
+	 */
 	async apply(name: string, writeCookie: boolean): Promise<void> {
 		const callId = ++this.#latestCall;
 		this.pendingLoads++;
@@ -193,10 +192,8 @@ export class ThemeAxis {
 			const css = await loadCss(this.#cacheKey(name), this.config.themes[name]);
 			if (callId !== this.#latestCall) return;
 			this.#applyCss(css);
-			if (writeCookie) {
-				this.#setCookie(name);
-				this.themeCookieValue = name;
-			}
+			if (writeCookie) this.#setCookie(name);
+			this.themeCookieValue = name;
 			this.themeState = name;
 		} finally {
 			this.pendingLoads--;
@@ -486,7 +483,11 @@ export class ThemeScope {
 		// before the server injects per-axis CSS). Flat mode's element is already
 		// filled by SSR, so this is skipped there — no redundant load, no flash.
 		for (const axis of this.#axes.values()) {
-			if (!axis.hasRenderedCss()) void axis.applyFromCookie();
+			if (!axis.hasRenderedCss()) {
+				axis.applyFromCookie().catch((err) => {
+					console.error('[svelte-themes] failed to apply theme on init:', err);
+				});
+			}
 		}
 
 		this.#mql = matchMedia('(prefers-color-scheme: dark)');
@@ -640,13 +641,36 @@ export function shouldSwapOnNavigation(
 }
 
 /**
- * On cross-scope navigation: hand off the whole active scope. Dispose the old
- * scope's listeners, diff its axis `<style>` elements against the new scope's
- * (remove the ones the new scope doesn't have — shared ids are reused and
- * updated by `applyStateFromCookies`), apply the new scope's state (axes +
- * scheme) atomically, then bind the new scope's listeners.
+ * Serialize cross-scope navigations. Each `applyActiveScopeOnNavigation` call
+ * appends to a chain so the async DOM hand-off (load new CSS → swap `<style>`
+ * elements → bind listeners) runs to completion before the next one starts.
+ * Without this, two overlapping navigations (A→B→A while the first CSS is still
+ * loading) could interleave their DOM mutations and leave the active scope with
+ * its `<style>` removed and a stale one lingering. `.catch(() => {})` keeps a
+ * failed navigation from poisoning the chain (each run logs its own errors).
  */
-export async function applyActiveScopeOnNavigation(pathname: string): Promise<void> {
+let navChain: Promise<void> = Promise.resolve();
+
+export function applyActiveScopeOnNavigation(pathname: string): Promise<void> {
+	navChain = navChain.then(() => runNavigation(pathname)).catch((err) => {
+		// Backstop: keep the (voided) caller from seeing an unhandled rejection and
+		// keep an unexpected throw from poisoning the chain. Expected loader
+		// failures are already handled inside `runNavigation`.
+		console.error('[svelte-themes] navigation failed:', err);
+	});
+	return navChain;
+}
+
+/**
+ * On cross-scope navigation: hand off the whole active scope. Dispose the old
+ * scope's listeners, apply the new scope's state (axes + scheme) atomically,
+ * diff its axis `<style>` elements against the new scope's (remove the ones the
+ * new scope doesn't have — shared ids are reused and updated in place by
+ * `applyStateFromCookies`), then bind the new scope's listeners. Runs serially
+ * (see `applyActiveScopeOnNavigation`), so no other navigation mutates the DOM
+ * or `lastActiveScopeName` underneath it.
+ */
+async function runNavigation(pathname: string): Promise<void> {
 	const next = matchScope(pathname) ?? getFirstScope();
 	const nextName = next?.config.name;
 	if (!shouldSwapOnNavigation(lastActiveScopeName, nextName)) return;
@@ -654,20 +678,31 @@ export async function applyActiveScopeOnNavigation(pathname: string): Promise<vo
 	const previousName = lastActiveScopeName;
 	lastActiveScopeName = nextName!;
 
-	if (previousName) {
-		const previous = registry.get(previousName);
-		if (previous && previous !== next) {
-			previous.disposeClient();
-			// Remove style elements for axes the new scope doesn't have.
-			const nextIds = new Set([...next!.axes.values()].map((a) => a.config.styleId));
-			for (const axis of previous.axes.values()) {
-				if (!nextIds.has(axis.config.styleId)) axis.removeStyleEl();
-			}
+	// Stop the old scope's listeners now (they don't affect rendering), but keep
+	// its `<style>` elements until the new scope's CSS is loaded + applied —
+	// removing them early would leave the page unstyled mid-load (a flash).
+	const previous =
+		previousName && previousName !== nextName ? registry.get(previousName) : undefined;
+	if (previous && previous !== next) previous.disposeClient();
+
+	try {
+		// Load + apply the new scope's axes (and scheme) atomically — the current
+		// frame stays visible until the new CSS is in hand.
+		await next!.applyStateFromCookies();
+	} catch (err) {
+		// A broken loader shouldn't reject the (voided) navigation promise or
+		// poison the chain — log and still bind listeners below.
+		console.error('[svelte-themes] failed to apply scope on navigation:', err);
+	}
+
+	// Now that the new elements are in place, remove the old scope's `<style>`
+	// elements the new scope doesn't reuse (shared ids were updated in place).
+	if (previous && previous !== next) {
+		const nextIds = new Set([...next!.axes.values()].map((a) => a.config.styleId));
+		for (const axis of previous.axes.values()) {
+			if (!nextIds.has(axis.config.styleId)) axis.removeStyleEl();
 		}
 	}
 
-	await next!.applyStateFromCookies();
-
-	// Guard against a rapid second navigation having moved on while we awaited.
-	if (lastActiveScopeName === nextName) next!.initClient();
+	next!.initClient();
 }

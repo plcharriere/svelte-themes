@@ -335,6 +335,17 @@ describe('createScopedThemes — validation throws', () => {
 		).toThrow(/cookieTheme and cookieScheme must differ/);
 	});
 
+	it('a scheme cookie colliding with a theme cookie throws', () => {
+		// cookieScheme 'theme-x' (shared) collides with flat scope "x"'s
+		// theme cookie, also `theme-x`.
+		expect(() =>
+			createScopedThemes({
+				cookieScheme: 'theme-x',
+				scopes: { x: { match: '/', themes: { salmon: css('') } } }
+			})
+		).toThrow(/scheme cookie "theme-x" collides/);
+	});
+
 	it('invalid cookieTheme / cookieScheme', () => {
 		expect(() =>
 			createScopedThemes({

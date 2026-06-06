@@ -57,7 +57,9 @@ A theme is a CSS file that defines variables on `:root` (and optionally on `.dar
 }
 ```
 
-Each theme file is self-contained — bring your own Tailwind import, `@theme inline {}` mapping, base layer, whatever. The library only swaps the file's content into a `<style>` element.
+The library only swaps the file's content into a `<style>` element — it's CSS-framework-agnostic and never parses what's inside.
+
+> **Using Tailwind CSS v4?** Theme files are compiled and injected *separately* from your main stylesheet, which has a few important consequences for `@apply`, `@theme`, and cascade layers. Read [Using with Tailwind CSS v4](#using-with-tailwind-css-v4) before writing your theme files — it'll save you a confusing afternoon.
 
 ### 2. Register your themes
 
@@ -736,6 +738,127 @@ The resolved per-axis state is stashed in an `AsyncLocalStorage` `RequestState` 
 A tiny **boot script** is auto-injected right before `</head>`. It runs synchronously before paint and toggles the `dark` class from `matchMedia('(prefers-color-scheme: dark)')` when the user is in system mode — covering first-ever visits and browsers that don't send the client hint. A `matchMedia` listener keeps the class updated if the OS preference changes mid-session.
 
 On the client, `setTheme(name)` writes the owning axis's cookie; `setScheme(...)` writes the scheme cookie. With `syncTabs` on (the default), each change also posts a scope- and axis-tagged message on a `BroadcastChannel`; other tabs validate and apply it locally without re-broadcasting, so there's no echo.
+
+## Using with Tailwind CSS v4
+
+The library doesn't know or care that you use Tailwind — it just injects each theme's CSS string into a `<style>`. But **how** that CSS is produced matters. With a `?inline` loader, each theme file is compiled by Tailwind **in isolation** and injected as a **separate** `<style>`, rather than being bundled into your one main stylesheet. That single fact drives every rule below. Get these right and themes compose perfectly; get them wrong and you'll see "unknown utility class" errors, missing shadows/fonts, or styling that's subtly off versus a direct `@import`.
+
+### The golden rule: global build vs. theme files
+
+Split responsibilities cleanly:
+
+| | Your global stylesheet (`app.css` / `globals.css`, bundled & scanned with your markup) | Each theme file (loaded via `?inline`, injected separately) |
+|---|---|---|
+| `@import "tailwindcss"` | ✅ once, here | ❌ never (it re-emits all of Tailwind into every theme) |
+| `@custom-variant`, `@utility` | ✅ here | ❌ |
+| **`@theme` mapping** | ✅ **the complete mapping, here, once** | ❌ — it silently does nothing when injected (see below) |
+| `@reference "…app.css"` | — | ✅ only if the file uses `@apply` |
+| `@layer theme, base, components, utilities;` | (already from `@import "tailwindcss"`) | ✅ if the file has layered rules (`@apply` in `@layer …`) |
+| `:root { … }` / `.dark { … }` **values** | optional fallbacks (see [#4](#4-make-global-fallback-values-overridable)) | ✅ **this is all a theme file should really contain** |
+
+If your themes are pure `:root`/`.dark` variable values (the shadcn/tweakcn shape), a theme file needs **nothing else** — no `@reference`, no `@theme`, no imports.
+
+### 1. `@apply` in a theme file needs `@reference`
+
+If a theme file uses `@apply` with any non-core utility (`bg-primary`, `ring-ring/50`, `text-muted-foreground`, …), compiling it standalone fails:
+
+```
+Cannot apply unknown utility class `ring-ring/50`
+```
+
+Those utilities come from your `@theme` tokens, which the isolated compile can't see. Add `@reference` at the top, pointing at your main stylesheet — it loads your theme/utilities **as context only, emitting no CSS** — so `@apply` resolves:
+
+```css
+@reference "../../app.css";   /* relative path to your main stylesheet */
+
+@layer base {
+  .my-component { @apply bg-primary ring-ring/50 rounded-md; }
+}
+```
+
+### 2. Pin the cascade-layer order
+
+A separately-compiled chunk only declares the layers **it** uses (e.g. `@layer base`), not Tailwind's full order. CSS decides layer priority by where each layer name **first appears across the whole document**, so an injected `@layer base` can land in a different position relative to `theme` / `components` / `utilities` than it has when bundled — which flips whether your utility classes override the file's component rules. Worse, it can differ between dev and prod (Vite injects your main CSS at different times). Pin the canonical order at the top of each such file so it's deterministic:
+
+```css
+@reference "../../app.css";
+@layer theme, base, components, utilities;   /* make layer order explicit & stable */
+
+@layer base {
+  /* …your @apply-ed rules… */
+}
+```
+
+(Files that are only `:root`/`.dark` variables have no layered rules and don't need this.)
+
+### 3. `@theme` must live in your global CSS — once (the big one)
+
+**A `@theme` block inside a separately-injected theme file does nothing.** Move the *entire* mapping to your global stylesheet.
+
+Why: `@theme` doesn't emit "active" CSS — it **configures which utility classes Tailwind generates** and what `var()` each expands to. Those classes are generated **on demand, from the markup Tailwind scans, within that one build**. A `@theme` sitting in an isolated chunk has no markup to generate utilities for, and can't reach across the compilation boundary to add utilities to your *main* build (the one that actually scans your `.svelte` files). So its mappings are silently dropped — `shadow-md` falls back to Tailwind's default gray, `font-serif` to the default serif, and the values the theme **did** inject (`--shadow-md`, `--font-serif`) have nothing referencing them.
+
+> **Symptom:** colors switch correctly but shadows, fonts, or radii look wrong/missing compared to importing the file directly. That's a `@theme` mapping that only existed in the theme file.
+
+So your global `@theme inline` must map **every token any theme uses** — colors, fonts (incl. `--font-serif`), the full radius scale, **shadows**, tracking, etc.:
+
+```css
+/* app.css / globals.css — bundled with your markup. Declared ONCE. */
+@import "tailwindcss";
+
+@theme inline {
+  --color-primary:    var(--primary);
+  --color-background: var(--background);
+  --font-serif:       var(--font-serif);
+  --shadow-md:        var(--shadow-md);
+  --radius-sm:        calc(var(--radius) - 4px);
+  /* …every token ANY theme references… */
+}
+```
+
+```css
+/* themes/bubblegum.css — injected separately. VALUES ONLY. */
+:root { --primary: oklch(0.62 0.18 348); --shadow-md: 3px 3px 0 …; --font-serif: Lora, serif; --radius: 0.4rem; }
+.dark { --primary: …; }
+```
+
+`@theme inline` is also what **makes live switching work**: it compiles `bg-primary` to `var(--primary)` (not a baked color), so when the library swaps the injected `:root { --primary }` value, every `bg-primary` on the page re-themes instantly with no recompile.
+
+> The shadcn/tweakcn theme exports ship a `@theme inline { … }` block **inside each theme file**. Delete it from the theme files and keep one merged copy in your global CSS — keep only `:root`/`.dark` in the theme files.
+
+**Why `@apply` and `@layer` work in a theme file but `@theme` doesn't:** `@apply` and `@layer` **emit concrete CSS** that travels inside the injected chunk (`@apply` copies a utility's declarations right into your rule; `@layer` just wraps emitted CSS). `@theme` only **configures utility generation** for the build that owns it — there's nothing to emit, and the configuration can't cross into your separate main build.
+
+### 4. Make global fallback values overridable
+
+If your global CSS also defines a default palette (`:root { --primary: … }`) as a fallback, wrap those blocks in `@layer base`. The injected theme files define `:root`/`.dark` **unlayered**, and in CSS **unlayered rules beat layered ones** regardless of source order — so layering your globals guarantees the active theme always wins:
+
+```css
+/* globals.css */
+@layer base {
+  :root { --primary: oklch(0.2 0 0); /* fallback only */ }
+  .dark { --primary: oklch(0.9 0 0); }
+}
+```
+
+Without the layer, both your globals and the theme are unlayered, so the **last one in the document** wins — which flips between dev and prod depending on injection order, and typically lets your globals override the theme. (Tokens defined *only* in globals still apply normally; layering matters only where both sides define the same variable.)
+
+### Theme-file checklist
+
+For each file loaded via `?inline`:
+
+- [ ] **No** `@import "tailwindcss"` (it re-emits the whole framework per theme)
+- [ ] **No** `@theme` block (moved to global CSS)
+- [ ] `@reference "…/app.css"` at the top — only if the file uses `@apply`
+- [ ] `@layer theme, base, components, utilities;` — only if it has layered (`@apply`-ed) rules
+- [ ] Otherwise: just `:root { … }` / `.dark { … }` values
+
+And once, in your global stylesheet:
+
+- [ ] The **complete** `@theme` mapping (every token any theme uses — colors, fonts, radius, **shadows**, …)
+- [ ] Any fallback `:root`/`.dark` values wrapped in `@layer base`
+
+### Dev note: restart after editing theme CSS
+
+The server compiles each theme's CSS once and caches it for the process lifetime (CSS is static per build). In development that means editing a theme file (or your global `@theme`) may not show up on reload until you **restart the dev server**, which clears the cache. Production builds compile fresh, so this is purely a dev-time wrinkle.
 
 ## Migrating from 0.2.x
 

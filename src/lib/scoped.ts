@@ -2,6 +2,7 @@ import { buildAxisConfigs, COOKIE_NAME_RE, validateDefaultThemesKeys } from './b
 import {
 	applyActiveScopeOnNavigation,
 	clearRegistry,
+	getActiveScope,
 	matchScope,
 	registerScope,
 	registerScopeMatcher,
@@ -68,6 +69,7 @@ export function createScopedThemes<const S extends Record<string, ScopeDecl>>(
 	type Resolved = { name: string; decl: ScopeDecl; scopeConfig: ThemeScopeConfig };
 	const resolved: Resolved[] = [];
 	const allThemeCookies = new Map<string, string>(); // cookieName -> scope (collision detection)
+	const schemeCookies = new Set<string>(); // every distinct scheme cookie name
 
 	for (const [name, decl] of scopeEntries) {
 		const label = `createScopedThemes: scope "${name}"`;
@@ -105,6 +107,7 @@ export function createScopedThemes<const S extends Record<string, ScopeDecl>>(
 		// Scheme: sharedScheme master switch.
 		const independentScheme = !sharedScheme;
 		const scopeCookieScheme = sharedScheme ? cookieScheme : `${cookieScheme}-${name}`;
+		schemeCookies.add(scopeCookieScheme);
 		const scopeDefaultScheme = sharedScheme
 			? topDefaultScheme
 			: ((decl.defaultScheme as Scheme | undefined) ?? topDefaultScheme);
@@ -123,6 +126,19 @@ export function createScopedThemes<const S extends Record<string, ScopeDecl>>(
 				syncChannel
 			}
 		});
+	}
+
+	// A scheme cookie must not collide with any theme cookie (possible via a
+	// hyphenated `cookieScheme` + a scope/axis whose theme cookie derives the
+	// same name). Scheme-vs-scheme can't collide (shared = one cookie;
+	// independent = unique `${cookieScheme}-${scope}`).
+	for (const sc of schemeCookies) {
+		const themeScope = allThemeCookies.get(sc);
+		if (themeScope !== undefined) {
+			throw new Error(
+				`createScopedThemes: scheme cookie "${sc}" collides with scope "${themeScope}"'s theme cookie`
+			);
+		}
 	}
 
 	// Cross-scope: duplicate match patterns.
@@ -181,13 +197,9 @@ export function createScopedThemes<const S extends Record<string, ScopeDecl>>(
 
 	const api: Record<string, unknown> = {};
 	for (const r of resolved) api[r.name] = buildScopeHandle(scopeInstances[r.name]);
-	api[RESERVED_KEY] = (): string => {
-		if (typeof window !== 'undefined') {
-			const matched = matchScope(window.location.pathname);
-			if (matched) return matched.config.name;
-		}
-		return first.name;
-	};
+	// Resolve via core's getActiveScope so SSR reads the request's matched scope
+	// (from ALS), not just the first one.
+	api[RESERVED_KEY] = (): string => getActiveScope()?.config.name ?? first.name;
 
 	return api as ScopedAPI<S>;
 }
